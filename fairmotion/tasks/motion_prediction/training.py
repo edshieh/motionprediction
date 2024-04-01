@@ -34,7 +34,7 @@ def train(args):
     utils.log_config(args.save_model_path, args)
 
     set_seeds()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
     device = args.device if args.device else device
     logging.info(f"Using device: {device}")
 
@@ -103,7 +103,7 @@ def train(args):
             outputs = model(
                 src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
             )
-            outputs = outputs.double()
+            outputs = outputs.float()
             loss = criterion(
                 outputs,
                 utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
@@ -208,7 +208,7 @@ if __name__ == "__main__":
         type=str,
         help="Training device",
         default=None,
-        choices=["cpu", "cuda"],
+        choices=["cpu", "mps"],
     )
     parser.add_argument(
         "--architecture",

@@ -119,7 +119,7 @@ def test_model(model, dataset, rep, device, mean, std, max_len=None):
 
 
 def main(args):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
     logging.info("Preparing dataset")
     dataset, mean, std = utils.prepare_dataset(
         *[

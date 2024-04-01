@@ -27,8 +27,8 @@ class Dataset(data.Dataset):
         tgt_seq = (self.tgt_seqs[index] - self.mean) / (
             self.std + constants.EPSILON
         )
-        src_seq = torch.Tensor(src_seq).to(device=self.device).double()
-        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).double()
+        src_seq = torch.Tensor(src_seq).to(device=self.device).float()
+        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
         return src_seq, tgt_seq
 
     def __len__(self):
@@ -38,7 +38,7 @@ class Dataset(data.Dataset):
 def get_loader(
     dataset_path,
     batch_size=100,
-    device="cuda",
+    device="mps",
     mean=None,
     std=None,
     shuffle=False,
@@ -46,7 +46,7 @@ def get_loader(
     """Returns data loader for custom dataset.
     Args:
         dataset_path: path to pickled numpy dataset
-        device: Device in which data is loaded -- 'cpu' or 'cuda'
+        device: Device in which data is loaded -- 'cpu' or 'mps'
         batch_size: mini-batch size.
     Returns:
         data_loader: data loader for custom dataset.

@@ -140,7 +140,7 @@ def prepare_model(
         )
     model = model.to(device)
     model.zero_grad()
-    model.double()
+    model.float()
     return model
 
 

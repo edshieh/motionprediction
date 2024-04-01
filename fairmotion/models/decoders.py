@@ -34,13 +34,13 @@ class LSTMDecoder(nn.Module):
         input_dim: Size of input vector
         output_dim: Size of output to be generated at each time step
         hidden_dim: Size of hidden state vector
-        device: Optional; Device to be used "cuda" or "cpu"
+        device: Optional; Device to be used "mps" or "cpu"
         lstm: Optional; If provided, the lstm cell will be used in the decoder.
             This is useful for sharing lstm parameters from encoder.
     """
 
     def __init__(
-        self, input_dim, output_dim, hidden_dim, device="cuda", lstm=None
+        self, input_dim, output_dim, hidden_dim, device="mps", lstm=None
     ):
         super(LSTMDecoder, self).__init__()
         self.input_dim = input_dim
@@ -94,7 +94,7 @@ class LSTMDecoder(nn.Module):
 
 class DecoderStepWithAttention(nn.Module):
     def __init__(
-        self, input_dim, output_dim, hidden_dim, source_length, device="cuda",
+        self, input_dim, output_dim, hidden_dim, source_length, device="mps",
     ):
         super(DecoderStepWithAttention, self).__init__()
         self.input_dim = input_dim
@@ -138,7 +138,7 @@ class LSTMDecoderWithAttention(LSTMDecoder):
         output_dim,
         max_source_length,
         hidden_dim=128,
-        device="cuda",
+        device="mps",
     ):
         """Extension of LSTMDecoder that uses attention mechanism to generate
         sequences.
@@ -148,7 +148,7 @@ class LSTMDecoderWithAttention(LSTMDecoder):
             output_dim: Size of output to be generated at each time step
             max_source_length: Length of source sequence
             hidden_dim: Size of hidden state vector
-            device: Optional; Device to be used "cuda" or "cpu"
+            device: Optional; Device to be used "mps" or "cpu"
         """
         super(LSTMDecoderWithAttention, self).__init__(
             input_dim, output_dim, hidden_dim, device
