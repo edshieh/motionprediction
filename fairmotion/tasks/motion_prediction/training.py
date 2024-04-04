@@ -8,10 +8,13 @@ import os
 import random
 import torch
 import torch.nn as nn
+import gc
 
 from fairmotion.tasks.motion_prediction import generate, utils, test
 from fairmotion.utils import utils as fairmotion_utils
 
+# Set environment variable for MPS fallback
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 logging.basicConfig(
     format="[%(asctime)s] %(message)s",
@@ -22,6 +25,7 @@ logging.basicConfig(
 
 def set_seeds():
     torch.manual_seed(1)
+    torch.mps.manual_seed(1)
     np.random.seed(1)
     random.seed(1)
     torch.backends.cudnn.deterministic = True
@@ -38,6 +42,8 @@ def train(args):
     device = args.device if args.device else device
     logging.info(f"Using device: {device}")
 
+
+
     logging.info("Preparing dataset...")
     dataset, mean, std = utils.prepare_dataset(
         *[
@@ -48,6 +54,9 @@ def train(args):
         device=device,
         shuffle=args.shuffle,
     )
+
+    logging.info(f"MPS Current allocated memory after data load: {torch.mps.current_allocated_memory()} bytes")
+    logging.info(f"MPS Driver allocated memory after data load: {torch.mps.driver_allocated_memory()} bytes")
     # Loss per epoch is the average loss per sequence
     num_training_sequences = len(dataset["train"]) * args.batch_size
 
@@ -61,7 +70,14 @@ def train(args):
         device=device,
         num_layers=args.num_layers,
         architecture=args.architecture,
+        num_heads=4,
+        src_len=120,
+        ninp = args.ninp
     )
+
+    logging.info(f"MPS Current allocated memory after model load: {torch.mps.current_allocated_memory()} bytes")
+    logging.info(f"MPS Driver allocated memory after model load: {torch.mps.driver_allocated_memory()} bytes")
+
 
     criterion = nn.MSELoss()
     model.init_weights()
@@ -69,11 +85,12 @@ def train(args):
 
     epoch_loss = 0
     for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
-        model.eval()
-        src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
-        outputs = model(src_seqs, tgt_seqs, teacher_forcing_ratio=1,)
-        loss = criterion(outputs, tgt_seqs)
-        epoch_loss += loss.item()
+        with torch.no_grad():
+            model.eval()
+            src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
+            outputs = model(src_seqs, tgt_seqs, teacher_forcing_ratio=1,)
+            loss = criterion(outputs, tgt_seqs)
+            epoch_loss += loss.item()
     epoch_loss = epoch_loss / num_training_sequences
     val_loss = generate.eval(
         model, criterion, dataset["validation"], args.batch_size, device,
@@ -97,20 +114,41 @@ def train(args):
             f"Running epoch {epoch} | "
             f"teacher_forcing_ratio={teacher_forcing_ratio}"
         )
+
+        num_iterations = len(dataset["train"])
         for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
+            # print(f"Iteration: {iterations}/{num_iterations}")
             opt.optimizer.zero_grad()
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
+            # logging.info(f"MPS Current allocated memory after tensor to device: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info("Forward pass...")
+            # print(src_seqs.is_contiguous(memory_format=torch.channels_last))
+            # print(tgt_seqs.is_contiguous(memory_format=torch.channels_last))
             outputs = model(
                 src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
             )
+            # print(outputs.is_contiguous(memory_format=torch.channels_last))
             outputs = outputs.float()
+            # logging.info(f"MPS Current allocated memory after forward pass: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info("Calculate loss...")
+            
+            # x = utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs)
+            # print(torch.isnan(x).any(), torch.isinf(x).any())
+            # print(torch.isnan(outputs).any(), torch.isinf(outputs).any())
             loss = criterion(
                 outputs,
                 utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
             )
+
+            # logging.info(f"MPS Current allocated memory after loss: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info("Backward pass...")
             loss.backward()
+            # print(loss.is_contiguous(memory_format=torch.channels_last))
+            # logging.info(f"MPS Current allocated memory after backward pass: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info("Opt step...")
             opt.step()
             epoch_loss += loss.item()
+            # logging.info(f"MPS Current allocated memory after opt step: {torch.mps.driver_allocated_memory()} bytes")
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
@@ -182,6 +220,18 @@ if __name__ == "__main__":
         default=1024,
     )
     parser.add_argument(
+        "--ninp",
+        type=int,
+        help="D dimension joint embedding",
+        default=56,
+    )
+    parser.add_argument(
+        "--num-heads",
+        type=int,
+        help="Number of heads in each attention block",
+        default=4,
+    )
+    parser.add_argument(
         "--num-layers",
         type=int,
         help="Number of layers of LSTM/Transformer in encoder/decoder",
@@ -221,6 +271,7 @@ if __name__ == "__main__":
             "transformer",
             "transformer_encoder",
             "rnn",
+            "STtransformer"
         ],
     )
     parser.add_argument(

@@ -14,6 +14,7 @@ from fairmotion.models import (
     rnn,
     seq2seq,
     transformer,
+    SpatioTemporalTransformer
 )
 from fairmotion.tasks.motion_prediction import dataset as motion_dataset
 from fairmotion.utils import constants
@@ -113,7 +114,7 @@ def prepare_dataset(
 
 
 def prepare_model(
-    input_dim, hidden_dim, device, num_layers=1, architecture="seq2seq"
+    input_dim, hidden_dim, device, num_layers=1, architecture="seq2seq", num_heads = 4, src_len = 120, ninp = 56
 ):
     if architecture == "rnn":
         model = rnn.RNN(input_dim, hidden_dim, num_layers)
@@ -128,6 +129,10 @@ def prepare_model(
             device=device,
         ).to(device)
         model = seq2seq.Seq2Seq(enc, dec)
+    elif architecture == "STtransformer":
+        model = SpatioTemporalTransformer.TransformerSpatialTemporalModel(
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len
+        )
     elif architecture == "tied_seq2seq":
         model = seq2seq.TiedSeq2Seq(input_dim, hidden_dim, num_layers, device)
     elif architecture == "transformer_encoder":
@@ -168,3 +173,7 @@ def prepare_tgt_seqs(architecture, src_seqs, tgt_seqs):
         return torch.cat((src_seqs[:, 1:], tgt_seqs), axis=1)
     else:
         return tgt_seqs
+    
+def create_dir_if_absent(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
