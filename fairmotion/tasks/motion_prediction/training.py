@@ -84,22 +84,22 @@ def train(args):
     training_losses, val_losses = [], []
 
     epoch_loss = 0
-    for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
-        with torch.no_grad():
-            model.eval()
-            src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
-            outputs = model(src_seqs, tgt_seqs, teacher_forcing_ratio=1,)
-            loss = criterion(outputs, tgt_seqs)
-            epoch_loss += loss.item()
-    epoch_loss = epoch_loss / num_training_sequences
-    val_loss = generate.eval(
-        model, criterion, dataset["validation"], args.batch_size, device,
-    )
-    logging.info(
-        "Before training: "
-        f"Training loss {epoch_loss} | "
-        f"Validation loss {val_loss}"
-    )
+    # for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
+    #     with torch.no_grad():
+    #         model.eval()
+    #         src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
+    #         outputs = model(src_seqs, tgt_seqs, teacher_forcing_ratio=1,)
+    #         loss = criterion(outputs, tgt_seqs)
+    #         epoch_loss += loss.item()
+    # epoch_loss = epoch_loss / num_training_sequences
+    # val_loss = generate.eval(
+    #     model, criterion, dataset["validation"], args.batch_size, device,
+    # )
+    # logging.info(
+    #     "Before training: "
+    #     f"Training loss {epoch_loss} | "
+    #     f"Validation loss {val_loss}"
+    # )
 
     logging.info("Training model...")
     torch.autograd.set_detect_anomaly(True)
@@ -124,9 +124,15 @@ def train(args):
             # logging.info("Forward pass...")
             # print(src_seqs.is_contiguous(memory_format=torch.channels_last))
             # print(tgt_seqs.is_contiguous(memory_format=torch.channels_last))
-            outputs = model(
-                src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-            )
+            if args.architecture == "moe":
+                outputs, total_aux_loss = model(
+                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                )
+            else:
+                outputs = model(
+                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                )
+                total_aux_loss = 0
             # print(outputs.is_contiguous(memory_format=torch.channels_last))
             outputs = outputs.float()
             # logging.info(f"MPS Current allocated memory after forward pass: {torch.mps.driver_allocated_memory()} bytes")
@@ -135,10 +141,12 @@ def train(args):
             # x = utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs)
             # print(torch.isnan(x).any(), torch.isinf(x).any())
             # print(torch.isnan(outputs).any(), torch.isinf(outputs).any())
-            loss = criterion(
+            # Calculate the main loss
+            main_loss = criterion(
                 outputs,
                 utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
             )
+            loss = main_loss + total_aux_loss
 
             # logging.info(f"MPS Current allocated memory after loss: {torch.mps.driver_allocated_memory()} bytes")
             # logging.info("Backward pass...")
@@ -238,6 +246,12 @@ if __name__ == "__main__":
         default=1,
     )
     parser.add_argument(
+        "--dropout",
+        type=float,
+        help="Dropout rate",
+        default=0.1,
+    )
+    parser.add_argument(
         "--save-model-path",
         type=str,
         help="Path to store saved models",
@@ -271,7 +285,8 @@ if __name__ == "__main__":
             "transformer",
             "transformer_encoder",
             "rnn",
-            "STtransformer"
+            "STtransformer",
+            "moe"
         ],
     )
     parser.add_argument(

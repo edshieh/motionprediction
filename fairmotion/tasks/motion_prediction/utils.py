@@ -14,7 +14,8 @@ from fairmotion.models import (
     rnn,
     seq2seq,
     transformer,
-    SpatioTemporalTransformer
+    SpatioTemporalTransformer,
+    moe
 )
 from fairmotion.tasks.motion_prediction import dataset as motion_dataset
 from fairmotion.utils import constants
@@ -114,8 +115,12 @@ def prepare_dataset(
 
 
 def prepare_model(
-    input_dim, hidden_dim, device, num_layers=1, architecture="seq2seq", num_heads = 4, src_len = 120, ninp = 56
+    input_dim, hidden_dim, device, num_layers=1, architecture="seq2seq", num_heads = 4, src_len = 120, ninp = 56, num_experts =2
 ):
+    model = SpatioTemporalTransformer.TransformerSpatialTemporalModel(
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len
+        )
+
     if architecture == "rnn":
         model = rnn.RNN(input_dim, hidden_dim, num_layers)
     if architecture == "seq2seq":
@@ -143,6 +148,11 @@ def prepare_model(
         model = transformer.TransformerModel(
             input_dim, hidden_dim, 4, hidden_dim, num_layers,
         )
+    elif architecture == "moe":
+        model = moe.moe(
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len
+        )
+
     model = model.to(device)
     model.zero_grad()
     model.float()
