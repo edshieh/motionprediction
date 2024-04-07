@@ -25,7 +25,7 @@ logging.basicConfig(
 
 def set_seeds():
     torch.manual_seed(1)
-    torch.mps.manual_seed(1)
+    torch.cuda.manual_seed(1)
     np.random.seed(1)
     random.seed(1)
     torch.backends.cudnn.deterministic = True
@@ -38,11 +38,9 @@ def train(args):
     utils.log_config(args.save_model_path, args)
 
     set_seeds()
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     device = args.device if args.device else device
     logging.info(f"Using device: {device}")
-
-
 
     logging.info("Preparing dataset...")
     dataset, mean, std = utils.prepare_dataset(
@@ -55,8 +53,8 @@ def train(args):
         shuffle=args.shuffle,
     )
 
-    logging.info(f"MPS Current allocated memory after data load: {torch.mps.current_allocated_memory()} bytes")
-    logging.info(f"MPS Driver allocated memory after data load: {torch.mps.driver_allocated_memory()} bytes")
+    #logging.info(f"MPS Current allocated memory after data load: {torch.cuda.current_allocated_memory()} bytes")
+   # logging.info(f"MPS Driver allocated memory after data load: {torch.cuda.driver_allocated_memory()} bytes")
     # Loss per epoch is the average loss per sequence
     num_training_sequences = len(dataset["train"]) * args.batch_size
 
@@ -70,13 +68,13 @@ def train(args):
         device=device,
         num_layers=args.num_layers,
         architecture=args.architecture,
-        num_heads=4,
+        num_heads=args.num_heads,
         src_len=120,
         ninp = args.ninp
     )
 
-    logging.info(f"MPS Current allocated memory after model load: {torch.mps.current_allocated_memory()} bytes")
-    logging.info(f"MPS Driver allocated memory after model load: {torch.mps.driver_allocated_memory()} bytes")
+    #logging.info(f"MPS Current allocated memory after model load: {torch.cuda.current_allocated_memory()} bytes")
+    #logging.info(f"MPS Driver allocated memory after model load: {torch.cuda.driver_allocated_memory()} bytes")
 
 
     criterion = nn.MSELoss()
@@ -120,7 +118,7 @@ def train(args):
             # print(f"Iteration: {iterations}/{num_iterations}")
             opt.optimizer.zero_grad()
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
-            # logging.info(f"MPS Current allocated memory after tensor to device: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info(f"MPS Current allocated memory after tensor to device: {torch.cuda.driver_allocated_memory()} bytes")
             # logging.info("Forward pass...")
             # print(src_seqs.is_contiguous(memory_format=torch.channels_last))
             # print(tgt_seqs.is_contiguous(memory_format=torch.channels_last))
@@ -134,8 +132,8 @@ def train(args):
                 )
                 total_aux_loss = 0
             # print(outputs.is_contiguous(memory_format=torch.channels_last))
-            outputs = outputs.float()
-            # logging.info(f"MPS Current allocated memory after forward pass: {torch.mps.driver_allocated_memory()} bytes")
+            outputs = outputs.double()
+            # logging.info(f"MPS Current allocated memory after forward pass: {torch.cuda.driver_allocated_memory()} bytes")
             # logging.info("Calculate loss...")
             
             # x = utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs)
@@ -148,15 +146,15 @@ def train(args):
             )
             loss = main_loss + total_aux_loss
 
-            # logging.info(f"MPS Current allocated memory after loss: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info(f"MPS Current allocated memory after loss: {torch.cuda.driver_allocated_memory()} bytes")
             # logging.info("Backward pass...")
             loss.backward()
             # print(loss.is_contiguous(memory_format=torch.channels_last))
-            # logging.info(f"MPS Current allocated memory after backward pass: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info(f"MPS Current allocated memory after backward pass: {torch.cuda.driver_allocated_memory()} bytes")
             # logging.info("Opt step...")
             opt.step()
             epoch_loss += loss.item()
-            # logging.info(f"MPS Current allocated memory after opt step: {torch.mps.driver_allocated_memory()} bytes")
+            # logging.info(f"MPS Current allocated memory after opt step: {torch.cuda.driver_allocated_memory()} bytes")
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
@@ -237,7 +235,7 @@ if __name__ == "__main__":
         "--num-heads",
         type=int,
         help="Number of heads in each attention block",
-        default=4,
+        default=8,
     )
     parser.add_argument(
         "--num-layers",
@@ -265,14 +263,14 @@ if __name__ == "__main__":
         default=5,
     )
     parser.add_argument(
-        "--epochs", type=int, help="Number of training epochs", default=200
+        "--epochs", type=int, help="Number of training epochs", default=50
     )
     parser.add_argument(
         "--device",
         type=str,
         help="Training device",
         default=None,
-        choices=["cpu", "mps"],
+        choices=["cpu", "cuda"],
     )
     parser.add_argument(
         "--architecture",

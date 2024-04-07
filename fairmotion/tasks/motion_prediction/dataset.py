@@ -27,8 +27,8 @@ class Dataset(data.Dataset):
         tgt_seq = (self.tgt_seqs[index] - self.mean) / (
             self.std + constants.EPSILON
         )
-        src_seq = torch.Tensor(src_seq).to(device=self.device).float()
-        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
+        src_seq = torch.Tensor(src_seq).to(device=self.device).double()
+        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).double()
         return src_seq, tgt_seq
 
     def __len__(self):
@@ -38,7 +38,7 @@ class Dataset(data.Dataset):
 def get_loader(
     dataset_path,
     batch_size=100,
-    device="mps",
+    device="cuda",
     mean=None,
     std=None,
     shuffle=False,

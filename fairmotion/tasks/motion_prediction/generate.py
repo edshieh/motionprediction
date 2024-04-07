@@ -25,7 +25,7 @@ def eval(model, criterion, dataset, batch_size, device):
                 max_len=max_len,
                 teacher_forcing_ratio=0,
             )
-            outputs = outputs.float()
+            outputs = outputs.double()
             loss = criterion(outputs, tgt_seqs)
             eval_loss += loss.item()
         return eval_loss / ((iterations + 1) * batch_size)
@@ -43,4 +43,4 @@ def generate(model, src_seqs, max_len, device):
         outputs = model(
             src_seqs, tgt_seqs, max_len=max_len, teacher_forcing_ratio=0
         )
-        return outputs.float()
+        return outputs.double()
