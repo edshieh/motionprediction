@@ -6,34 +6,96 @@ import numpy as np
 import os
 import torch
 from multiprocessing import Pool
+from pathlib import Path
 
+from fairmotion.models import (
+    rnn,
+    seq2seq,
+    transformer,
+    SpatioTemporalTransformer,
+    moe
+)
 from fairmotion.data import amass_dip, bvh
 from fairmotion.core import motion as motion_class
 from fairmotion.tasks.motion_prediction import generate, metrics, utils
 from fairmotion.ops import conversions, motion as motion_ops
+from fairmotion.utils import utils as fairmotion_utils
+
+from typing import Any, Callable, Dict, Iterable, List, Tuple
+from torch.utils.data import DataLoader
+from fairmotion.core.motion import Skeleton
 
 
-logging.basicConfig(
-    format="[%(asctime)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.INFO,
-)
+# Set environment variable for MPS fallback
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
+LOGGER = logging.getLogger(__name__)
+
+def configure_logging(model_architecture: str, model_save_path: Path):
+    global LOGGER
+    logFormatter = logging.Formatter(
+        fmt="[%(asctime)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    LOGGER.setLevel(logging.INFO)
+
+    log_file = model_save_path.joinpath(f"test_{model_architecture}.log")
+    if log_file.exists():
+        log_file.unlink()
+    fileHandler = logging.FileHandler(log_file)
+    fileHandler.setFormatter(logFormatter)
+    LOGGER.addHandler(fileHandler)
+
+    consoleHandler = logging.StreamHandler()
+    consoleHandler.setFormatter(logFormatter)
+    LOGGER.addHandler(consoleHandler)
 
 
-def prepare_model(path, num_predictions, args, device):
+def prepare_model(
+    path: Path,
+    num_predictions: int,
+    hidden_dim: int,
+    num_layers: int,
+    architecture: str,
+    device: str
+) -> (
+    rnn.RNN |
+    seq2seq.Seq2Seq |
+    seq2seq.TiedSeq2Seq |
+    transformer.TransformerLSTMModel |
+    transformer.TransformerModel |
+    SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+    moe.moe
+):
     model = utils.prepare_model(
         input_dim=num_predictions,
-        hidden_dim=args.hidden_dim,
+        hidden_dim=hidden_dim,
         device=device,
-        num_layers=args.num_layers,
-        architecture=args.architecture,
+        num_layers=num_layers,
+        architecture=architecture,
     )
     model.load_state_dict(torch.load(path))
     model.eval()
     return model
 
 
-def run_model(model, data_iter, max_len, device, mean, std):
+def run_model(
+    model: (
+        rnn.RNN |
+        seq2seq.Seq2Seq |
+        seq2seq.TiedSeq2Seq |
+        transformer.TransformerLSTMModel |
+        transformer.TransformerModel |
+        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+        moe.moe
+    ),
+    data_iter: Dict[str, DataLoader],
+    max_len: int,
+    device: str,
+    mean: float,
+    std: float
+) -> List[np.ndarray]:
     pred_seqs = []
     src_seqs, tgt_seqs = [], []
     for src_seq, tgt_seq in data_iter:
@@ -52,7 +114,14 @@ def run_model(model, data_iter, max_len, device, mean, std):
     ]
 
 
-def save_seq(i, pred_seq, src_seq, tgt_seq, skel):
+def save_seq(
+    i: int,
+    pred_seq: np.ndarray,
+    src_seq: np.ndarray,
+    tgt_seq: np.ndarray,
+    skel: Skeleton,
+    save_output_path: Path
+) -> None:
     # seq_T contains pred, src, tgt data in the same order
     motions = [
         motion_class.Motion.from_matrix(seq, skel)
@@ -61,14 +130,19 @@ def save_seq(i, pred_seq, src_seq, tgt_seq, skel):
     ref_motion = motion_ops.append(motions[1], motions[2])
     pred_motion = motion_ops.append(motions[1], motions[0])
     bvh.save(
-        ref_motion, os.path.join(args.save_output_path, "ref", f"{i}.bvh"),
+        ref_motion, save_output_path.joinpath("ref", f"{i}.bvh"),
     )
     bvh.save(
-        pred_motion, os.path.join(args.save_output_path, "pred", f"{i}.bvh"),
+        pred_motion, save_output_path.joinpath("pred", f"{i}.bvh"),
     )
 
 
-def convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep):
+def convert_to_T(
+    pred_seqs: np.ndarray,
+    src_seqs: np.ndarray,
+    tgt_seqs: np.ndarray,
+    rep: str
+) -> List[np.ndarray]:
     ops = utils.convert_fn_to_R(rep)
     seqs_T = [
         conversions.R2T(utils.apply_ops(seqs, ops))
@@ -77,23 +151,29 @@ def convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep):
     return seqs_T
 
 
-def save_motion_files(seqs_T, args):
+def save_motion_files(seqs_T: List[np.ndarray], save_output_path: Path):
     idxs_to_save = [i for i in range(0, len(seqs_T[0]), len(seqs_T[0]) // 10)]
     amass_dip_motion = amass_dip.load(
         file=None, load_skel=True, load_motion=False,
     )
-    utils.create_dir_if_absent(os.path.join(args.save_output_path, "ref"))
-    utils.create_dir_if_absent(os.path.join(args.save_output_path, "pred"))
+
+    fairmotion_utils.create_dir_if_absent(save_output_path.joinpath("ref"))
+    fairmotion_utils.create_dir_if_absent(save_output_path.joinpath("pred"))
 
     pool = Pool(10)
     indices = range(len(seqs_T[0]))
     skels = [amass_dip_motion.skel for _ in indices]
+    save_output_paths = [save_output_path for _ in indices]
     pool.starmap(
-        save_seq, [list(zip(indices, *seqs_T, skels))[i] for i in idxs_to_save]
+        save_seq, [list(zip(indices, *seqs_T, skels, save_output_paths))[i] for i in idxs_to_save]
     )
 
 
-def calculate_metrics(pred_seqs, tgt_seqs):
+def calculate_metrics(
+    pred_seqs: np.ndarray,
+    tgt_seqs: np.ndarray
+) -> Dict[int, np.float64]:
+
     metric_frames = [6, 12, 18, 24]
     R_pred, _ = conversions.T2Rp(pred_seqs)
     R_tgt, _ = conversions.T2Rp(tgt_seqs)
@@ -106,7 +186,23 @@ def calculate_metrics(pred_seqs, tgt_seqs):
     return mae
 
 
-def test_model(model, dataset, rep, device, mean, std, max_len=None):
+def test_model(
+    model: (
+        rnn.RNN |
+        seq2seq.Seq2Seq |
+        seq2seq.TiedSeq2Seq |
+        transformer.TransformerLSTMModel |
+        transformer.TransformerModel |
+        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+        moe.moe
+    ),
+    dataset: Dict[str, DataLoader],
+    rep: str,
+    device: str,
+    mean: float,
+    std: float,
+    max_len: int=None
+) -> Tuple[List[np.ndarray], Dict[int, np.float64]]:
     pred_seqs, src_seqs, tgt_seqs = run_model(
         model, dataset, max_len, device, mean, std,
     )
@@ -115,15 +211,19 @@ def test_model(model, dataset, rep, device, mean, std, max_len=None):
     # target sequence
     if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
         mae = calculate_metrics(seqs_T[0], seqs_T[2])
+
     return seqs_T, mae
 
 
-def main(args):
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    logging.info("Preparing dataset")
+def main(args: argparse.Namespace):
+    configure_logging(args.architecture, args.save_model_path)
+    device = fairmotion_utils.set_device(args.device)
+    LOGGER.info(f"Using device: {device}")
+
+    LOGGER.info("Preparing dataset")
     dataset, mean, std = utils.prepare_dataset(
         *[
-            os.path.join(args.preprocessed_path, f"{split}.pkl")
+            args.preprocessed_path.joinpath(f"{split}.pkl")
             for split in ["train", "test", "validation"]
         ],
         batch_size=args.batch_size,
@@ -134,27 +234,32 @@ def main(args):
     data_shape = next(iter(dataset["train"]))[0].shape
     num_predictions = data_shape[-1]
 
-    logging.info("Preparing model")
+    LOGGER.info("Preparing model")
+    model_filename = f"{args.epoch if args.epoch else 'best'}.model"
+    model_file_path = args.save_model_path.joinpath(model_filename)
     model = prepare_model(
-        f"{args.save_model_path}/{args.epoch if args.epoch else 'best'}.model",
+        model_file_path,
         num_predictions,
-        args,
-        device,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        architecture=args.architecture,
+        device=device,
     )
 
-    logging.info("Running model")
-    _, rep = os.path.split(args.preprocessed_path.strip("/"))
+    LOGGER.info("Running model")
+    rep = args.preprocessed_path.name
+
     seqs_T, mae = test_model(
         model, dataset["test"], rep, device, mean, std, args.max_len
     )
-    logging.info(
+    LOGGER.info(
         "Test MAE: "
         + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
     )
 
     if args.save_output_path:
-        logging.info("Saving results")
-        save_motion_files(seqs_T, args)
+        LOGGER.info("Saving results")
+        save_motion_files(seqs_T, args.save_output_path)
 
 
 if __name__ == "__main__":
@@ -163,42 +268,57 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--preprocessed-path",
-        type=str,
-        help="Path to folder with pickled" "files from dataset",
+        dest="preprocessed_path",
+        # type=str,
+        type=lambda p: Path(p).expanduser().resolve(strict=True),
+        help="Path to folder with pickled files from dataset",
         required=True,
     )
     parser.add_argument(
         "--save-model-path",
-        type=str,
+        dest="save_model_path",
+        # type=str,
+        type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to saved models",
         required=True,
     )
     parser.add_argument(
         "--save-output-path",
-        type=str,
+        dest="save_output_path",
+        # type=str,
+        type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to store predicted motion",
         default=None,
     )
     parser.add_argument(
         "--hidden-dim",
+        dest="hidden_dim",
         type=int,
         help="Hidden size of LSTM units in encoder/decoder",
         default=1024,
     )
     parser.add_argument(
         "--num-layers",
+        dest="num_layers",
         type=int,
         help="Number of layers of LSTM/Transformer in encoder/decoder",
         default=1,
     )
     parser.add_argument(
-        "--max-len", type=int, help="Length of seq to generate", default=None,
+        "--max-len",
+        type=int,
+        help="Length of seq to generate",
+        default=None,
     )
     parser.add_argument(
-        "--batch-size", type=int, help="Batch size for testing", default=64
+        "--batch-size",
+        type=int,
+        help="Batch size for testing",
+        default=64
     )
     parser.add_argument(
-        "--shuffle", action='store_true',
+        "--shuffle",
+        action='store_true',
         help="Use this option to enable shuffling",
     )
     parser.add_argument(
@@ -207,6 +327,13 @@ if __name__ == "__main__":
         help="Model from epoch to test, will test on best"
         " model if not specified",
         default=None,
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        help="Training device",
+        default=None,
+        choices=["cpu", "cuda", "mps"],
     )
     parser.add_argument(
         "--architecture",
@@ -221,6 +348,10 @@ if __name__ == "__main__":
             "rnn",
         ],
     )
-
     args = parser.parse_args()
+
+    # validate provided options
+    if not args.preprocessed_path.is_dir():
+        raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
+
     main(args)
