@@ -12,6 +12,7 @@ from torch.nn.init import xavier_uniform_
 from fairmotion.models import decoders
 import random
 
+# Set environment variable for MPS fallback
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 
@@ -41,7 +42,7 @@ class PositionalEncodingST(nn.Module):
 class SpatialTemporalEncoderLayer(nn.Module):
     def __init__(self, ninp, num_heads, hidden_dim, dropout):
         super(SpatialTemporalEncoderLayer, self).__init__()
-        
+
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
 
@@ -220,7 +221,7 @@ class moe(nn.Module):
                 src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
             # print(src_slice.is_contiguous(memory_format=torch.channels_last))
             # print(data_chunk.is_contiguous(memory_format=torch.channels_last))
-                
+
                 # Sum up all auxiliary losses
         total_aux_loss = sum(total_aux_losses) if total_aux_losses else torch.tensor(0.).to(src.device)
         return data_chunk, total_aux_loss
