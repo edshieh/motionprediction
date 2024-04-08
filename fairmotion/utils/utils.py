@@ -1,13 +1,18 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
+import math
 import numpy as np
 import os
+import random
+import torch
 from functools import partial
 from multiprocessing import Pool
-import random
+from pathlib import Path
+
+from typing import Any, Callable, Dict, Iterable, List, Tuple
 
 
-def str_to_axis(s):
+def str_to_axis(s: str) -> np.ndarray:
     if s == "x":
         return np.array([1.0, 0.0, 0.0])
     elif s == "y":
@@ -18,7 +23,7 @@ def str_to_axis(s):
         raise Exception
 
 
-def axis_to_str(a):
+def axis_to_str(a: np.ndarray) -> str:
     if np.array_equal(a, [1.0, 0.0, 0.0]):
         return "x"
     elif np.array_equal(a, [0.0, 1.0, 0.0]):
@@ -29,7 +34,7 @@ def axis_to_str(a):
         raise Exception
 
 
-def get_index(index_dict, key):
+def get_index(index_dict: Dict, key: int|str|Any):
     if isinstance(key, int):
         return key
     elif isinstance(key, str):
@@ -38,7 +43,7 @@ def get_index(index_dict, key):
         return index_dict[key.name]
 
 
-def run_parallel(func, iterable, num_cpus=20, **kwargs):
+def run_parallel(func: Callable, iterable: Iterable, num_cpus: int=20, **kwargs) -> List:
     """
     Run function over multiple cpus. The function must be written such that
     it processes single input value.
@@ -69,7 +74,7 @@ def files_in_dir(
     sample_mode=None,
     sample_num=None,
     keywords_exclude=[],
-):
+) -> List:
     """Returns list of files in `path` directory.
 
     Args:
@@ -125,6 +130,53 @@ def _apply_fn_agnostic_to_vec_mat(input, fn):
     return output[0] if input.ndim == 1 else output
 
 
-def create_dir_if_absent(path):
+def create_dir_if_absent(path: str|Path):
     if not os.path.exists(path):
         os.makedirs(path)
+
+
+def set_device(arg_device: str):
+    # if user requested a specific type then set that
+    if arg_device:
+        return arg_device
+
+    # Check if gpu backend is available otherwise use cpu
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = "mps"
+    else:
+        device = "cpu"
+
+    return device
+
+
+def yes_no_input(question: str="Enter yes/y or no/n: "):
+    """Simple recursive to prompt user for yes or no response
+
+    Args:
+        question (str, optional): Question to prompt user with. Defaults to "Enter yes/y or no/n: ".
+
+    Returns:
+        bool: whether the user has responded with yes (True) or no (False)
+    """
+    response = input(question).lower().strip()
+    if response in ("yes", "y"):
+        return True
+    elif response in ("no", "n"):
+        return False
+    else:
+        return yes_no_input("Please enter yes/y or no/n: ")
+
+
+def convert_byte_to_humanreadable(size_bytes: str|int):
+    # convert to int if str
+    if isinstance(size_bytes, str):
+        size_bytes = int(size_bytes)
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return "%s %s" % (s, size_name[i])
