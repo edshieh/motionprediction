@@ -138,7 +138,7 @@ def train(args: argparse.Namespace):
         device=device,
         num_layers=args.num_layers,
         architecture=args.architecture,
-        num_heads=4,
+        num_heads = args.num_heads,
         src_len=120,
         ninp = args.ninp
     )
@@ -302,15 +302,15 @@ def validate_args(args: argparse.Namespace):
 
     if args.save_model_path.exists():
         if args.force:
-            LOGGER.info(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
+            print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
             rmtree(args.save_model_path)
         else:
             yes_no_response = fairmotion_utils.yes_no_input(f"Directory {args.save_model_path} already exists. \nDo you want to delete? (yes/y or no/n): ")
             if yes_no_response:
-                LOGGER.info(f"Removing directory {args.save_model_path} with user input.")
+                print(f"Removing directory {args.save_model_path} with user input.")
                 rmtree(args.save_model_path)
             else:
-                LOGGER.info("Not deleting directory. Please change config value for 'output_directory_tag'\n")
+                print("Not deleting directory. Please change config value for '--save-model-path'\n")
                 sys.exit()
 
 def main(args: argparse.Namespace):
@@ -358,6 +358,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num-heads",
+        dest="num_heads",
         type=int,
         help="Number of heads in each attention block",
         default=4,
