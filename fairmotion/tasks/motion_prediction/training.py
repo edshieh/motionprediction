@@ -238,7 +238,7 @@ def train(args: argparse.Namespace):
             #     )
             # LOGGER.info("Backward pass...")
             loss.backward()
-
+            nn.utils.clip_grad_norm_(model.parameters(), 1)
             # print(loss.is_contiguous(memory_format=torch.channels_last))
             # LOGGER.info(f"MPS Current allocated memory after backward pass: {torch.mps.driver_allocated_memory()} bytes")
             # LOGGER.info("Opt step...")
