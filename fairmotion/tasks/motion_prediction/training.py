@@ -173,8 +173,12 @@ def train(args: argparse.Namespace):
     for epoch in range(args.epochs):
         epoch_loss = 0
         model.train()
+
+        # Use a dummy value for the calculation if tuning is True, else use the actual epoch count
+        effective_epochs = 100 if args.tuning else args.epochs
+
         teacher_forcing_ratio = np.clip(
-            (1 - 2 * epoch / args.epochs), a_min=0, a_max=1,
+            (1 - 2 * epoch / effective_epochs), a_min=0, a_max=1,
         )
         LOGGER.info(
             f"Running epoch {epoch} | "
@@ -439,6 +443,15 @@ if __name__ == "__main__":
         default=False,
         help="Enable force for any stdin required during consolidation process"
     )
+
+    parser.add_argument(
+        "-t", "--tuning",
+        dest="tuning",
+        action="store_true",
+        default=False,
+        help="Enable tuning option which keeps tfr as if epochs were 100"
+    )
+
     args = parser.parse_args()
 
     main(args)
