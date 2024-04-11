@@ -1,0 +1,23 @@
+#!/bin/bash
+
+#SBATCH -JNINP_SOTA_KB
+#SBATCH -N1 -G 1 -C A100-80GB --ntasks-per-node=1
+#SBATCH --mem-per-gpu=80G
+#SBATCH -t16:00:00
+#SBATCH -oReport-%j.out
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=kbae36@gatech.edu
+
+source ~/.bashrc
+export MOTION_HOME="/home/hice1/kbae36/fairmotion/tasks/motion_prediction"
+export DATA_PATH="/home/hice1/kbae36/aa"
+
+conda activate base
+cd $MOTION_HOME
+for i in {32,112}
+do
+  if [ $((i % 16)) -eq 0 ]; then
+    echo "Running training with ninp set tot $i" > run.log
+    srun python training.py --architecture STtransformer --save-model-path model_batch_$i --preprocessed-path $DATA_PATH --batch-size 48 --ninp $i --device cuda  --hidden-dim 128 --num-heads 2 --num-layers 1 --lr 0.001 --epochs 10 -t
+  fi
+done
