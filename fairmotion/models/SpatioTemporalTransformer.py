@@ -11,6 +11,7 @@ from torch.nn.init import xavier_uniform_
 from fairmotion.models import decoders
 import random
 
+# Set environment variable for MPS fallback
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 
@@ -40,7 +41,7 @@ class PositionalEncodingST(nn.Module):
 class SpatialTemporalEncoderLayer(nn.Module):
     def __init__(self, ninp, num_heads, hidden_dim, dropout):
         super(SpatialTemporalEncoderLayer, self).__init__()
-        
+
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
 

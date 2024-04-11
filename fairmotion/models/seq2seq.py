@@ -52,7 +52,7 @@ class TiedSeq2Seq(nn.Module):
         input_dim: Size of input vector
         hidden_dim: Size of hidden state vector
         num_layers: Number of layers in the shared LSTM unit
-        device: Optional; Device to be used "mps" or "cpu"
+        device: Optional; Device to be used "cuda", "mps", or "cpu"
     """
 
     def __init__(self, input_dim, hidden_dim, num_layers, device):
