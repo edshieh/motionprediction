@@ -136,7 +136,8 @@ def prepare_model(
     num_heads: int=4,
     src_len: int=120,
     ninp: int=56,
-    num_experts: int=2
+    num_experts: int=2,
+    dropout: float=.1
 ) -> (
         rnn.RNN |
         seq2seq.Seq2Seq |
@@ -162,7 +163,7 @@ def prepare_model(
         model = seq2seq.Seq2Seq(enc, dec)
     elif architecture == "STtransformer":
         model = SpatioTemporalTransformer.TransformerSpatialTemporalModel(
-            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len
+            ntoken=input_dim, ninp=ninp, num_heads=num_heads, hidden_dim=hidden_dim, num_layers=num_layers, src_length=src_len, device=device, dropout=dropout
         )
     elif architecture == "tied_seq2seq":
         model = seq2seq.TiedSeq2Seq(input_dim, hidden_dim, num_layers, device)

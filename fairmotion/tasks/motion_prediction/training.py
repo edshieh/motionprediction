@@ -140,7 +140,8 @@ def train(args: argparse.Namespace):
         architecture=args.architecture,
         num_heads = args.num_heads,
         src_len=120,
-        ninp = args.ninp
+        ninp = args.ninp,
+        dropout=args.dropout
     )
 
     if device == "mps":
