@@ -133,7 +133,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class moe(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = S
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24
     ):
         # S : number of joints, default 24
         super(moe, self).__init__()
@@ -169,7 +169,7 @@ class moe(nn.Module):
             max_len  = min(max_len, tgt.shape[1])# if training, we limit the upper bound
         B, T, E = src.shape # src: B, T, E
         data_chunk = torch.zeros(B, max_len, E).type_as(src.data)
-        S = S
+        S = 24
         E = int(E/S)
         src_slice = src
         total_aux_losses = []  # Initialize a list to keep track of auxiliary losses
