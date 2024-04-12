@@ -107,7 +107,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class TransformerSpatialTemporalModel(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = S
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 3
     ):
         # S : number of joints, default S
         super(TransformerSpatialTemporalModel, self).__init__()
