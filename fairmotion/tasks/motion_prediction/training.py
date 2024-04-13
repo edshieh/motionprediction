@@ -237,7 +237,7 @@ def train(args: argparse.Namespace):
         LOGGER.info(
             f"Training loss {epoch_loss} | "
             f"Validation loss {val_loss} | "
-            f"Learning rate {print(f"Learning rate {lr if args.scheduler else args.lr} | ")} | "
+            f"Learning rate {lr if args.scheduler else args.lr} | "
             f"Iterations {iterations + 1}"
         )
 
