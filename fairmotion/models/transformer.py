@@ -33,10 +33,12 @@ class PositionalEncoding(nn.Module):
 
 class TransformerLSTMModel(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, dropout=0.5
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, device, dropout=0.5
     ):
         super(TransformerLSTMModel, self).__init__()
         self.pos_encoder = PositionalEncoding(ninp, dropout)
+        self.device = device
+
         encoder_layers = TransformerEncoderLayer(
             ninp, num_heads, hidden_dim, dropout
         )
@@ -47,7 +49,7 @@ class TransformerLSTMModel(nn.Module):
         self.encoder = nn.Linear(ntoken, ninp)
         self.ninp = ninp
         self.decoder = decoders.LSTMDecoder(
-            input_dim=ntoken, hidden_dim=hidden_dim, output_dim=ntoken,
+            input_dim=ntoken, hidden_dim=hidden_dim, output_dim=ntoken, device=self.device
         )
         self.num_layers = num_layers
 
@@ -86,11 +88,12 @@ class TransformerLSTMModel(nn.Module):
 
 class TransformerModel(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, dropout=0.5
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, device, dropout=0.5,
     ):
         super(TransformerModel, self).__init__()
         self.model_type = "Transformer"
         self.src_mask = None
+        self.device = device
 
         self.pos_encoder = PositionalEncoding(ninp, dropout)
         encoder_layer = TransformerEncoderLayer(
@@ -172,7 +175,7 @@ class TransformerModel(nn.Module):
             tgt_mask = self._generate_square_subsequent_mask(max_len).to(
                 device=tgt.device
             )
-            
+
             for i in range(max_len):
                 decoder_input[i] = next_pose
                 pos_encoded_input = self.pos_encoder(
@@ -186,4 +189,3 @@ class TransformerModel(nn.Module):
                 del output
             output = decoder_input
         return output.transpose(0, 1)
-    

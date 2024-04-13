@@ -33,6 +33,7 @@ from human_body_prior.body_model.body_model import BodyModel
 from human_body_prior.tools.omni_tools import copy2cpu as c2c
 from fairmotion.data import bvh
 from fairmotion.ops import conversions, motion as motion_ops
+from fairmotion.utils import utils as fairmotion_utils
 
 
 def get_dfs_order(parents_np):
@@ -67,7 +68,7 @@ def prepare_mesh_viewer(img_shape):
 
 
 def main(args):
-    comp_device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    comp_device = torch.device(fairmotion_utils.set_device(args.device))
     bm = BodyModel(
         bm_fname=args.body_model_file, num_betas=10
     ).to(comp_device)
@@ -143,5 +144,12 @@ if __name__ == "__main__":
     parser.add_argument("--input-file", type=str, required=True)
     parser.add_argument("--body-model-file", type=str, required=True)
     parser.add_argument("--video-output-file", type=str, required=True)
+    parser.add_argument(
+        "--device",
+        type=str,
+        help="Training device",
+        default=None,
+        choices=["cpu", "cuda", "mps"],
+    )
     args = parser.parse_args()
     main(args)
