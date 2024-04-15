@@ -31,6 +31,14 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 LOGGER = logging.getLogger(__name__)
 
+def update_learning_rate(optimizer, step_num):
+    step_num += 1  # Avoid division by zero
+    lr =  args.ninp**-0.5 * (min(step_num ** -0.5, step_num * (10000 ** -1.5)))
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return lr
+
+
 def configure_logging(model_architecture: str, model_save_path: Path):
     global LOGGER
     logFormatter = logging.Formatter(
@@ -189,18 +197,10 @@ def train(args: argparse.Namespace):
         num_iterations = len(dataset["train"])
         for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
             # print(f"Iteration: {iterations}/{num_iterations}")
-
+            if args.scheduler:
+                lr = update_learning_rate(opt.optimizer, iterations + epoch * num_iterations)
             opt.optimizer.zero_grad()
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
-            # if device == "mps":
-            #     LOGGER.info(
-            #         "MPS Current allocated memory after tensor to device: "
-            #         f"{fairmotion_utils.convert_byte_to_humanreadable(torch.mps.driver_allocated_memory())} bytes"
-            #     )
-
-            # LOGGER.info("Forward pass...")
-            # print(src_seqs.is_contiguous(memory_format=torch.channels_last))
-            # print(tgt_seqs.is_contiguous(memory_format=torch.channels_last))
 
             if args.architecture == "moe":
                 outputs, total_aux_loss = model(
@@ -212,22 +212,10 @@ def train(args: argparse.Namespace):
                 )
                 total_aux_loss = 0
 
-            # print(outputs.is_contiguous(memory_format=torch.channels_last))
             if device == "mps":
                 outputs = outputs.float()
             else:
                 outputs = outputs.double()
-
-            # if device == "mps":
-            #     LOGGER.info(
-            #         "MPS Current allocated memory after forward pass: "
-            #         f"{fairmotion_utils.convert_byte_to_humanreadable(torch.mps.driver_allocated_memory())} bytes"
-            #     )
-            # LOGGER.info("Calculate loss...")
-
-            # x = utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs)
-            # print(torch.isnan(x).any(), torch.isinf(x).any())
-            # print(torch.isnan(outputs).any(), torch.isinf(outputs).any())
 
             # Calculate the main loss
             main_loss = criterion(
@@ -236,25 +224,9 @@ def train(args: argparse.Namespace):
             )
             loss = main_loss + total_aux_loss
 
-            # if device == "mps":
-            #     LOGGER.info(
-            #         "MPS Current allocated memory after loss: "
-            #         f"{fairmotion_utils.convert_byte_to_humanreadable(torch.mps.driver_allocated_memory())} bytes"
-            #     )
-            # LOGGER.info("Backward pass...")
             loss.backward()
-
-            # print(loss.is_contiguous(memory_format=torch.channels_last))
-            # LOGGER.info(f"MPS Current allocated memory after backward pass: {torch.mps.driver_allocated_memory()} bytes")
-            # LOGGER.info("Opt step...")
             opt.step()
             epoch_loss += loss.item()
-
-            # if device == "mps":
-            #     LOGGER.info(
-            #         "MPS Current allocated memory after opt step: "
-            #         f"{fairmotion_utils.convert_byte_to_humanreadable(torch.mps.driver_allocated_memory())} bytes"
-            #     )
 
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
@@ -266,6 +238,7 @@ def train(args: argparse.Namespace):
         LOGGER.info(
             f"Training loss {epoch_loss} | "
             f"Validation loss {val_loss} | "
+            f"Learning rate {lr if args.scheduler else args.lr} | "
             f"Iterations {iterations + 1}"
         )
 
@@ -430,6 +403,15 @@ if __name__ == "__main__":
         help="Learning rate",
         default=None,
     )
+
+    parser.add_argument(
+        "-s", "--scheduler",
+        dest="scheduler",
+        action="store_true",
+        default=False,
+        help="Use learning rate scheduler"
+    )
+
     parser.add_argument(
         "--optimizer",
         type=str,
