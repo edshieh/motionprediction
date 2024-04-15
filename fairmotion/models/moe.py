@@ -98,7 +98,10 @@ class SpatialTemporalEncoderLayer(nn.Module):
         tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
         # tx: input to temporal multihead (T, B*S, E)
         # t_mask :mask for temporal attention
-        t_mask = self._generate_square_subsequent_mask(T).to(device=x.device,)
+        if x.device == torch.device("mps:0"):
+            t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
+        else:
+            t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float64)
         tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
         tm = self.dropout_1(tm)
         tm = self.norm_1(tm + tx)
