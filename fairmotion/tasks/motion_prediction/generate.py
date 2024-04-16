@@ -25,11 +25,7 @@ def eval(model, criterion, dataset, batch_size, device):
                 max_len=max_len,
                 teacher_forcing_ratio=0,
             )
-
-            if device == "mps":
-                outputs = outputs.float()
-            else:
-                outputs = outputs.double()
+            outputs = outputs.float()
 
             loss = criterion(outputs, tgt_seqs)
             eval_loss += loss.item()
@@ -48,7 +44,4 @@ def generate(model, src_seqs, max_len, device):
         outputs = model(
             src_seqs, tgt_seqs, max_len=max_len, teacher_forcing_ratio=0
         )
-        if device == "mps":
-            return outputs.float()
-        else:
-            return outputs.double()
+        return outputs.float()

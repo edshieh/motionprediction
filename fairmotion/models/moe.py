@@ -8,6 +8,7 @@ import os
 from torch.nn import LayerNorm
 from torch.nn import MultiheadAttention
 from torch.nn.init import xavier_uniform_
+from torch.cuda.amp import autocast, GradScaler
 
 from fairmotion.models import decoders
 import random
@@ -41,9 +42,11 @@ class PositionalEncodingST(nn.Module):
         self.register_buffer("pe", pe)
 
     def forward(self, x):
-        # x: B x T x S x E
-        x = x + self.pe[:,  x.size(1), :, :]
-        return self.dropout(x) # B, T, S, E
+        with autocast():
+            # x: B x T x S x E
+            x = x + self.pe[:,  x.size(1), :, :]
+            output = self.dropout(x) # B, T, S, E
+        return output
 
 class SpatialTemporalEncoderLayer(nn.Module):
     def __init__(self, ninp, num_heads, hidden_dim, dropout):
@@ -60,9 +63,9 @@ class SpatialTemporalEncoderLayer(nn.Module):
         self.norm_2 = LayerNorm(ninp)
         self.norm_3 = LayerNorm(ninp)
 
-        moe = MoE(
+        self.moe = MoE(
             dim = ninp*24,
-            num_experts = 16,               # increase the experts (# parameters) of your model without increasing computation
+            num_experts = 256,               # increase the experts (# parameters) of your model without increasing computation
             gating_top_n = 2,               # default to top 2 gating, but can also be more (3 was tested in the paper with a lower threshold)
             threshold_train = 0.2,          # at what threshold to accept a token to be routed to second expert and beyond - 0.2 was optimal for 2 expert routing, and apparently should be lower for 3
             threshold_eval = 0.2,
@@ -74,14 +77,11 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
         # for the entire mixture of experts block, in context of transformer
 
-        self.moe_block = SparseMoEBlock(
-            moe,
-            add_ff_before = True,
-            add_ff_after = True
-        )
-
-        self.linear_1 = nn.Linear(ninp, hidden_dim)
-        self.linear_2 = nn.Linear(hidden_dim, ninp)
+        # self.moe_block = SparseMoEBlock(
+        #     moe,
+        #     add_ff_before = True,
+        #     add_ff_after = True
+        # )
 
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -93,43 +93,43 @@ class SpatialTemporalEncoderLayer(nn.Module):
         return mask
 
     def forward(self, x):
-        B, T, S, E = x.shape # B x T x S x E
-        tx = torch.transpose(x, 0, 1) # T x B x S x E
-        tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
-        # tx: input to temporal multihead (T, B*S, E)
-        # t_mask :mask for temporal attention
-        if x.device == torch.device("mps:0"):
+        with autocast():
+            B, T, S, E = x.shape # B x T x S x E
+            tx = torch.transpose(x, 0, 1) # T x B x S x E
+            tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
+            # tx: input to temporal multihead (T, B*S, E)
+            # t_mask :mask for temporal attention
             t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
-        else:
-            t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float64)
-        tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
-        tm = self.dropout_1(tm)
-        tm = self.norm_1(tm + tx)
-        tm = torch.transpose(tm, 0, 1) # (B*S) x T x E
-        tm = torch.reshape(tm, (B, S, T, E)) # B x S x T x E
-        tm = torch.transpose(tm, 1, 2) # B x T x S x E
+            tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
+            tm = self.dropout_1(tm)
+            tm = self.norm_1(tm + tx)
+            tm = torch.transpose(tm, 0, 1) # (B*S) x T x E
+            tm = torch.reshape(tm, (B, S, T, E)) # B x S x T x E
+            tm = torch.transpose(tm, 1, 2) # B x T x S x E
 
-        sx = torch.reshape(x, (B * T, S, E)) # (B*T) x S x E
-        sx = torch.transpose(sx, 0, 1)# S x (B*T) x E
-        # sx: input to spatial multihead (S, B*T, E)
-        sm, _ = self.SpatialMultiheadAttention(sx, sx, sx) # S x (B*T) x E
-        sm = self.dropout_2(sm)
-        sm = self.norm_2(sm + sx)
-        sm = torch.transpose(sm, 0, 1) # (B*T) x S x E
-        sm = torch.reshape(sm, (B, T, S, E)) # B x T x S x E
+            sx = torch.reshape(x, (B * T, S, E)) # (B*T) x S x E
+            sx = torch.transpose(sx, 0, 1)# S x (B*T) x E
+            # sx: input to spatial multihead (S, B*T, E)
+            sm, _ = self.SpatialMultiheadAttention(sx, sx, sx) # S x (B*T) x E
+            sm = self.dropout_2(sm)
+            sm = self.norm_2(sm + sx)
+            sm = torch.transpose(sm, 0, 1) # (B*T) x S x E
+            sm = torch.reshape(sm, (B, T, S, E)) # B x T x S x E
 
-        # add temporal + spatial
-        input = tm + sm # B x T x S x E
+            # add temporal + spatial
+            input = tm + sm # B x T x S x E
 
-        #reshape so that it fits into MOE
-        input_reshaped = torch.reshape(input, (B, T, S*E)) # B x T x (S x E)
-        # moe block
-        xx, total_aux_loss, _, _ = self.moe_block(input_reshaped) # B x T x (S x E)
-        # undo reshape
-        xx = torch.reshape(xx, (B, T, S, E)) # B x T x S x E
-        # add and norm
-        xx = self.dropout_3(xx)
-        return self.norm_3(xx + input), total_aux_loss
+            #reshape so that it fits into MOE
+            input_reshaped = torch.reshape(input, (B, T, S*E)) # B x T x (S x E)
+            # moe block
+            xx, total_aux_loss, _, _ = self.moe(input_reshaped) # B x T x (S x E)
+            # undo reshape
+            xx = torch.reshape(xx, (B, T, S, E)) # B x T x S x E
+            # add and norm
+            xx = self.dropout_3(xx)
+
+            output, loss = self.norm_3(xx + input), total_aux_loss
+        return output, loss
 
 
 
@@ -166,37 +166,38 @@ class moe(nn.Module):
                 xavier_uniform_(p)
 
     def forward(self, src, tgt, max_len=None, teacher_forcing_ratio=1.):
-        if max_len is None:
-            max_len = tgt.shape[1]
-        if self.training:
-            max_len  = min(max_len, tgt.shape[1])# if training, we limit the upper bound
-        B, T, E = src.shape # src: B, T, E
-        data_chunk = torch.zeros(B, max_len, E).type_as(src.data)
-        S = 24
-        E = int(E/S)
-        src_slice = src
-        total_aux_losses = []  # Initialize a list to keep track of auxiliary losses
-        for i in range(max_len):
-            src_slice_reshape = torch.reshape(src_slice, (B, T, S, E)) # B x T x S x E
-            projected_src = self.encoder(src_slice_reshape) * np.sqrt(self.ninp) # B x T x S x E
-            encoder_output = self.pos_encoder(projected_src)# B x T x S x E
-            for layer in self.layers:
-                encoder_output, aux_loss = layer(encoder_output)
-                total_aux_losses.append(aux_loss)
-            output = self.project_1(encoder_output) # B x T x S x E
-            output = torch.reshape(src_slice_reshape, (B, T, S * E)) # B x T x (S x E)
-            output = output.transpose(1, 2).contiguous() # B x (S x E) x T
-            output = self.project_2(output)  # B x (S x E) x 1
-            output = output.transpose(1, 2)  # B x 1 x (S x E)
-            output = output + src_slice[:, -1:, :] # B x 1 x (S x E)
-            data_chunk[:, i:i + 1, :] = output
-            teacher_force = random.random() < teacher_forcing_ratio
-            src_slice = src_slice[:,1:,:] # shift to the right
-            if teacher_force:
-                src_slice = torch.cat((src_slice, tgt[:,i:i+1,:]), axis=1)
-            else:
-                src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
+        with autocast():
+            if max_len is None:
+                max_len = tgt.shape[1]
+            if self.training:
+                max_len  = min(max_len, tgt.shape[1])# if training, we limit the upper bound
+            B, T, E = src.shape # src: B, T, E
+            data_chunk = torch.zeros(B, max_len, E).type_as(src.data)
+            S = 24
+            E = int(E/S)
+            src_slice = src
+            total_aux_losses = []  # Initialize a list to keep track of auxiliary losses
+            for i in range(max_len):
+                src_slice_reshape = torch.reshape(src_slice, (B, T, S, E)) # B x T x S x E
+                projected_src = self.encoder(src_slice_reshape) * np.sqrt(self.ninp) # B x T x S x E
+                encoder_output = self.pos_encoder(projected_src)# B x T x S x E
+                for layer in self.layers:
+                    encoder_output, aux_loss = layer(encoder_output)
+                    total_aux_losses.append(aux_loss)
+                output = self.project_1(encoder_output) # B x T x S x E
+                output = torch.reshape(src_slice_reshape, (B, T, S * E)) # B x T x (S x E)
+                output = output.transpose(1, 2).contiguous() # B x (S x E) x T
+                output = self.project_2(output)  # B x (S x E) x 1
+                output = output.transpose(1, 2)  # B x 1 x (S x E)
+                output = output + src_slice[:, -1:, :] # B x 1 x (S x E)
+                data_chunk[:, i:i + 1, :] = output
+                teacher_force = random.random() < teacher_forcing_ratio
+                src_slice = src_slice[:,1:,:] # shift to the right
+                if teacher_force:
+                    src_slice = torch.cat((src_slice, tgt[:,i:i+1,:]), axis=1)
+                else:
+                    src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
 
-                # Sum up all auxiliary losses
-        total_aux_loss = sum(total_aux_losses) if total_aux_losses else torch.tensor(0.).to(src.device)
+                    # Sum up all auxiliary losses
+            total_aux_loss = sum(total_aux_losses) if total_aux_losses else torch.tensor(0.).to(src.device)
         return data_chunk, total_aux_loss

@@ -182,11 +182,7 @@ def prepare_model(
 
     model = model.to(device)
     model.zero_grad()
-
-    if device == "mps":
-        model.float()
-    else:
-        model.double()
+    model.float()
 
     return model
 

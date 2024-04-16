@@ -9,6 +9,7 @@ import os
 import random
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 import sys
 from pathlib import Path
 from shutil import rmtree
@@ -165,6 +166,7 @@ def train(args: argparse.Namespace):
     criterion = nn.MSELoss()
     model.init_weights()
     training_losses, val_losses = [], []
+    scaler = GradScaler()
 
     # Log model loss before any training
     # epoch_loss, val_loss = get_initial_epoch_and_validation_loss(
@@ -202,30 +204,29 @@ def train(args: argparse.Namespace):
             opt.optimizer.zero_grad()
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
 
-            if args.architecture == "moe":
-                outputs, total_aux_loss = model(
-                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-                )
-            else:
-                outputs = model(
-                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-                )
-                total_aux_loss = 0
+            with autocast():
+                if args.architecture == "moe":
+                    outputs, total_aux_loss = model(
+                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                    )
+                else:
+                    outputs = model(
+                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                    )
+                    total_aux_loss = 0
 
-            if device == "mps":
                 outputs = outputs.float()
-            else:
-                outputs = outputs.double()
 
-            # Calculate the main loss
-            main_loss = criterion(
-                outputs,
-                utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
-            )
-            loss = main_loss + total_aux_loss
+                # Calculate the main loss
+                main_loss = criterion(
+                    outputs,
+                    utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
+                )
+                loss = main_loss + total_aux_loss
 
-            loss.backward()
-            opt.step()
+            scaler.scale(loss).backward()
+            scaler.step(opt.optimizer)
+            scaler.update()
             epoch_loss += loss.item()
 
         epoch_loss = epoch_loss / num_training_sequences
