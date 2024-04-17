@@ -153,9 +153,6 @@ def train(args: argparse.Namespace):
         dropout=args.dropout
     )
 
-    if torch.cuda.is_available():
-        model = nn.DataParallel(model).cuda()
-
     if device == "mps":
         LOGGER.info(
             "MPS Current allocated memory after model load: "
@@ -167,11 +164,7 @@ def train(args: argparse.Namespace):
         )
 
     criterion = nn.MSELoss()
-    # Access the underlying model and initialize weights
-    if hasattr(model, 'module'):
-        model.module.init_weights()
-    else:
-        model.init_weights()
+    model.init_weights()
     training_losses, val_losses = [], []
     scaler = GradScaler()
 
