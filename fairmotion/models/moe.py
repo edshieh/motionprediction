@@ -10,7 +10,7 @@ from torch.nn import MultiheadAttention
 from torch.nn.init import xavier_uniform_
 from torch.cuda.amp import autocast, GradScaler
 
-from fairmotion.models import decoders
+from fairmotion.models.SpatioTemporalTransformer import PositionalEncodingST
 import random
 
 # Set environment variable for MPS fallback
