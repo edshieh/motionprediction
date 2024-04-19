@@ -97,7 +97,7 @@ def get_initial_epoch_and_validation_loss(
         epoch_loss += loss.item()
     epoch_loss = epoch_loss / num_training_sequences
     val_loss = generate.eval(
-        model, criterion, dataset["validation"], batch_size, device, args.architecture
+        model, criterion, dataset["validation"], batch_size, device
     )
     return epoch_loss, val_loss
 
@@ -150,7 +150,8 @@ def train(args: argparse.Namespace):
         num_heads = args.num_heads,
         src_len=120,
         ninp = args.ninp,
-        dropout=args.dropout
+        dropout=args.dropout,
+        num_experts=args.num_experts
     )
 
     if device == "mps":
@@ -205,24 +206,17 @@ def train(args: argparse.Namespace):
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
 
             with autocast():
-                if args.architecture == "moe":
-                    outputs, total_aux_loss = model(
-                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-                    )
-                else:
-                    outputs = model(
-                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-                    )
-                    total_aux_loss = 0
+                outputs = model(
+                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                )
 
                 outputs = outputs.float()
 
                 # Calculate the main loss
-                main_loss = criterion(
+                loss = criterion(
                     outputs,
                     utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
                 )
-                loss = main_loss + total_aux_loss
 
             scaler.scale(loss).backward()
             scaler.step(opt.optimizer)
@@ -232,7 +226,7 @@ def train(args: argparse.Namespace):
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
-            model, criterion, dataset["validation"], args.batch_size, device, args.architecture
+            model, criterion, dataset["validation"], args.batch_size, device
         )
         val_losses.append(val_loss)
         opt.epoch_step(val_loss=val_loss)
@@ -348,6 +342,13 @@ if __name__ == "__main__":
         type=int,
         help="Number of layers of LSTM/Transformer in encoder/decoder",
         default=1,
+    )
+    parser.add_argument(
+        "--num-experts",
+        dest="num_experts",
+        type=int,
+        help="Number of experts in MOE block",
+        default=16,
     )
     parser.add_argument(
         "--dropout",

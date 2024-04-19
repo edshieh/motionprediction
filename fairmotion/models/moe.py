@@ -1,4 +1,4 @@
-from st_moe_pytorch import MoE, SparseMoEBlock
+from soft_moe_pytorch import SoftMoE
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import numpy as np
@@ -25,31 +25,8 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 # H: Hidden dimension of feed forward linear layer in attention layers
 #####
 
-class PositionalEncodingST(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncodingST, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model)
-        )
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term) # T, E
-        pe = pe.unsqueeze(0)# B, T, E
-        pe = pe.unsqueeze(2)  # B, T, S, E
-        self.register_buffer("pe", pe)
-
-    def forward(self, x):
-        with autocast():
-            # x: B x T x S x E
-            x = x + self.pe[:,  x.size(1), :, :]
-            output = self.dropout(x) # B, T, S, E
-        return output
-
 class SpatialTemporalEncoderLayer(nn.Module):
-    def __init__(self, ninp, num_heads, hidden_dim, dropout):
+    def __init__(self, ninp, num_heads, num_experts, dropout):
         super(SpatialTemporalEncoderLayer, self).__init__()
 
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
@@ -63,25 +40,11 @@ class SpatialTemporalEncoderLayer(nn.Module):
         self.norm_2 = LayerNorm(ninp)
         self.norm_3 = LayerNorm(ninp)
 
-        self.moe = MoE(
+        self.moe = SoftMoE(
             dim = ninp*24,
-            num_experts = 256,               # increase the experts (# parameters) of your model without increasing computation
-            gating_top_n = 2,               # default to top 2 gating, but can also be more (3 was tested in the paper with a lower threshold)
-            threshold_train = 0.2,          # at what threshold to accept a token to be routed to second expert and beyond - 0.2 was optimal for 2 expert routing, and apparently should be lower for 3
-            threshold_eval = 0.2,
-            capacity_factor_train = 1.25,   # experts have fixed capacity per batch. we need some extra capacity in case gating is not perfectly balanced.
-            capacity_factor_eval = 2.,      # capacity_factor_* should be set to a value >=1
-            balance_loss_coef = 1e-2,       # multiplier on the auxiliary expert balancing auxiliary loss
-            router_z_loss_coef = 1e-3,      # loss weight for router z-loss
+            seq_len = 1024,
+            num_experts = num_experts
         )
-
-        # for the entire mixture of experts block, in context of transformer
-
-        # self.moe_block = SparseMoEBlock(
-        #     moe,
-        #     add_ff_before = True,
-        #     add_ff_after = True
-        # )
 
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -122,21 +85,21 @@ class SpatialTemporalEncoderLayer(nn.Module):
             #reshape so that it fits into MOE
             input_reshaped = torch.reshape(input, (B, T, S*E)) # B x T x (S x E)
             # moe block
-            xx, total_aux_loss, _, _ = self.moe(input_reshaped) # B x T x (S x E)
+            xx = self.moe(input_reshaped) # B x T x (S x E)
             # undo reshape
             xx = torch.reshape(xx, (B, T, S, E)) # B x T x S x E
-            # add and norm
+            # dropout
             xx = self.dropout_3(xx)
-
-            output, loss = self.norm_3(xx + input), total_aux_loss
-        return output, loss
+            # add residual connection and norm
+            output = self.norm_3(xx + input)
+        return output
 
 
 
 
 class moe(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, num_experts = 16
     ):
         # S : number of joints, default 24
         super(moe, self).__init__()
@@ -145,7 +108,7 @@ class moe(nn.Module):
 
         self.pos_encoder = PositionalEncodingST(ninp, dropout)
         self.layers = nn.ModuleList([
-            SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout)
+            SpatialTemporalEncoderLayer(ninp, num_heads, num_experts, dropout)
             for _ in range(num_layers)
         ])
 
@@ -176,14 +139,12 @@ class moe(nn.Module):
             S = 24
             E = int(E/S)
             src_slice = src
-            total_aux_losses = []  # Initialize a list to keep track of auxiliary losses
             for i in range(max_len):
                 src_slice_reshape = torch.reshape(src_slice, (B, T, S, E)) # B x T x S x E
                 projected_src = self.encoder(src_slice_reshape) * np.sqrt(self.ninp) # B x T x S x E
                 encoder_output = self.pos_encoder(projected_src)# B x T x S x E
                 for layer in self.layers:
-                    encoder_output, aux_loss = layer(encoder_output)
-                    total_aux_losses.append(aux_loss)
+                    encoder_output = layer(encoder_output)
                 output = self.project_1(encoder_output) # B x T x S x E
                 output = torch.reshape(src_slice_reshape, (B, T, S * E)) # B x T x (S x E)
                 output = output.transpose(1, 2).contiguous() # B x (S x E) x T
@@ -197,7 +158,4 @@ class moe(nn.Module):
                     src_slice = torch.cat((src_slice, tgt[:,i:i+1,:]), axis=1)
                 else:
                     src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
-
-                    # Sum up all auxiliary losses
-            total_aux_loss = sum(total_aux_losses) if total_aux_losses else torch.tensor(0.).to(src.device)
-        return data_chunk, total_aux_loss
+        return data_chunk

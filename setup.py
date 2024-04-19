@@ -20,7 +20,7 @@ setup(
         "scipy",
         "torch>=2.2.2",
         "tqdm",
-        "st-moe-pytorch",
+        "soft-moe-pytorch",
         "pyglet==1.5.27",
         "PyOpenGL==3.1.0",
         "PyOpenGL-accelerate",

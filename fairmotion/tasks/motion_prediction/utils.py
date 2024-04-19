@@ -136,7 +136,7 @@ def prepare_model(
     num_heads: int=4,
     src_len: int=120,
     ninp: int=56,
-    num_experts: int=2,
+    num_experts: int=16,
     dropout: float=.1
 ) -> (
         rnn.RNN |
@@ -177,7 +177,7 @@ def prepare_model(
         )
     elif architecture == "moe":
         model = moe.moe(
-            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts
         )
 
     model = model.to(device)
