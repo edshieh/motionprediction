@@ -6,11 +6,13 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import re
 import random
 import torch
 import torch.nn as nn
 import sys
 from pathlib import Path
+from typing import Sequence
 from shutil import rmtree
 
 from fairmotion.models import (  # Used for typing
@@ -138,7 +140,8 @@ def train(args: argparse.Namespace):
     # number of predictions per time step = num_joints * angle representation
     # shape is (batch_size, seq_len, num_predictions)
     _, tgt_len, num_predictions = next(iter(dataset["train"]))[1].shape
-
+    model = None
+    start_epoch = 0
     # Load in the desired model
     model = utils.prepare_model(
         input_dim=num_predictions,
@@ -151,7 +154,12 @@ def train(args: argparse.Namespace):
         ninp = args.ninp,
         dropout=args.dropout
     )
+    if args.load_from_last_model:
+        model_state_dict, start_epoch = load_from_last_saved_model(args.save_model_path, device)
+        args.epochs += start_epoch
+        model.load_state_dict(model_state_dict)
 
+        LOGGER.info(f"Setting epoch to continue from {start_epoch}, new max epoch: {args.epochs}")
     if device == "mps":
         LOGGER.info(
             "MPS Current allocated memory after model load: "
@@ -179,7 +187,7 @@ def train(args: argparse.Namespace):
     LOGGER.info("Training model...")
     torch.autograd.set_detect_anomaly(True)
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
         model.train()
 
@@ -272,13 +280,27 @@ def plot_curves(args: argparse.Namespace, training_losses: List[float], val_loss
     plt.xlabel("Epoch")
     plt.savefig(args.save_model_path.joinpath("loss.svg"), format="svg")
 
+def load_from_last_saved_model(save_model_path: str, device: str) -> Sequence[dict, int]:
+    LOGGER.info(f"Loading from {save_model_path}")
+    regex = re.compile("^([0-9]*).model")
+    files = os.listdir(save_model_path)
+    models = sorted([f for f in files if regex.match(f)])
+    if not models:
+      msg = f"Last saved model not found. {files}"
+      LOGGER.error(msg)
+      raise Exception(msg)
+    last_saved_model = models[-1]
+    start_epoch = int(regex.match(last_saved_model).group(1))
+    last_model_path = Path(save_model_path / last_saved_model)
+    LOGGER.info(f"Loading {last_model_path=}, {start_epoch=}")
+    return torch.load(last_model_path, device, weights_only=True), start_epoch
 
 def validate_args(args: argparse.Namespace):
     # validate provided options
     if not args.preprocessed_path.is_dir():
         raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
 
-    if args.save_model_path.exists():
+    if not args.load_from_last_model and args.save_model_path.exists():
         if args.force:
             print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
             rmtree(args.save_model_path)
@@ -367,7 +389,7 @@ if __name__ == "__main__":
         type=int,
         help="Frequency (in terms of number of epochs) at which model is "
         "saved",
-        default=5,
+        default=1,
     )
     parser.add_argument(
         "--epochs",
@@ -433,6 +455,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable tuning option which keeps tfr as if epochs were 100"
+    )
+    parser.add_argument(
+        "-l", "--load-from-last-model",
+        dest="load_from_last_model",
+        action="store_true",
+        default=False,
+        help="Allow loading model file from last saved epoch."
     )
 
     args = parser.parse_args()
