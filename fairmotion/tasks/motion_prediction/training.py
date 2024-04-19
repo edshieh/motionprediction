@@ -12,7 +12,6 @@ import torch
 import torch.nn as nn
 import sys
 from pathlib import Path
-from typing import Sequence
 from shutil import rmtree
 
 from fairmotion.models import (  # Used for typing
@@ -155,9 +154,10 @@ def train(args: argparse.Namespace):
         dropout=args.dropout
     )
     if args.load_from_last_model:
-        model_state_dict, start_epoch = load_from_last_saved_model(args.save_model_path, device)
+        # referenced : https://discuss.pytorch.org/t/how-to-load-model-weights-that-are-stored-as-an-ordereddict/75500/4
+        loaded_weights, start_epoch = load_from_last_saved_model(args.save_model_path, device)
         args.epochs += start_epoch
-        model.load_state_dict(model_state_dict)
+        model.load_state_dict(loaded_weights)
 
         LOGGER.info(f"Setting epoch to continue from {start_epoch}, new max epoch: {args.epochs}")
     if device == "mps":
@@ -280,17 +280,17 @@ def plot_curves(args: argparse.Namespace, training_losses: List[float], val_loss
     plt.xlabel("Epoch")
     plt.savefig(args.save_model_path.joinpath("loss.svg"), format="svg")
 
-def load_from_last_saved_model(save_model_path: str, device: str) -> Sequence[dict, int]:
+def load_from_last_saved_model(save_model_path: str, device: str):
     LOGGER.info(f"Loading from {save_model_path}")
     regex = re.compile("^([0-9]*).model")
     files = os.listdir(save_model_path)
-    models = sorted([f for f in files if regex.match(f)])
-    if not models:
+    epoch_and_models = [[int(regex.match(fname).group(1)),fname] for fname in files if regex.match(fname)]
+    if not epoch_and_models:
       msg = f"Last saved model not found. {files}"
       LOGGER.error(msg)
       raise Exception(msg)
-    last_saved_model = models[-1]
-    start_epoch = int(regex.match(last_saved_model).group(1))
+    sorted_models = sorted(epoch_and_models, key=lambda m: m[0])
+    start_epoch, last_saved_model = sorted_models[-1]
     last_model_path = Path(save_model_path / last_saved_model)
     LOGGER.info(f"Loading {last_model_path=}, {start_epoch=}")
     return torch.load(last_model_path, device, weights_only=True), start_epoch
