@@ -389,7 +389,7 @@ if __name__ == "__main__":
         type=int,
         help="Frequency (in terms of number of epochs) at which model is "
         "saved",
-        default=1,
+        default=5,
     )
     parser.add_argument(
         "--epochs",
