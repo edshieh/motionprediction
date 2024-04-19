@@ -97,7 +97,7 @@ def get_initial_epoch_and_validation_loss(
         epoch_loss += loss.item()
     epoch_loss = epoch_loss / num_training_sequences
     val_loss = generate.eval(
-        model, criterion, dataset["validation"], batch_size, device,
+        model, criterion, dataset["validation"], batch_size, device, args.architecture
     )
     return epoch_loss, val_loss
 
@@ -232,7 +232,7 @@ def train(args: argparse.Namespace):
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
-            model, criterion, dataset["validation"], args.batch_size, device,
+            model, criterion, dataset["validation"], args.batch_size, device, args.architecture
         )
         val_losses.append(val_loss)
         opt.epoch_step(val_loss=val_loss)

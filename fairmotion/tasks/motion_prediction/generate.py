@@ -3,7 +3,7 @@
 import torch
 
 
-def eval(model, criterion, dataset, batch_size, device):
+def eval(model, criterion, dataset, batch_size, device, architecture):
     """
     Evaluate the performance of the model on the provided dataset.
     Returns average loss over the dataset.
@@ -19,16 +19,27 @@ def eval(model, criterion, dataset, batch_size, device):
                 tgt_seqs.to(device),
                 seed_tgt_seqs.to(device),
             )
-            outputs = model(
-                src_seqs,
-                seed_tgt_seqs,
-                max_len=max_len,
-                teacher_forcing_ratio=0,
-            )
-            outputs = outputs.float()
+            
+            with autocast():
+                if architecture == "moe":
+                    outputs, total_aux_loss = model(
+                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                    )
+                else:
+                    outputs = model(
+                        src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+                    )
+                    total_aux_loss = 0
 
-            loss = criterion(outputs, tgt_seqs)
-            eval_loss += loss.item()
+                outputs = outputs.float()
+
+                # Calculate the main loss
+                main_loss = criterion(
+                    outputs,
+                    utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
+                )
+                loss = main_loss + total_aux_loss
+                eval_loss += loss.item()
         return eval_loss / ((iterations + 1) * batch_size)
 
 
