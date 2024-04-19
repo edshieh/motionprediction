@@ -190,7 +190,7 @@ def train(args: argparse.Namespace):
         effective_epochs = 100 if args.tuning else args.epochs
 
         teacher_forcing_ratio = np.clip(
-            (1 - 2 * epoch / effective_epochs), a_min=0, a_max=1,
+            (1 - epoch / effective_epochs), a_min=0, a_max=1,
         )
         LOGGER.info(
             f"Running epoch {epoch} | "
