@@ -139,7 +139,6 @@ def train(args: argparse.Namespace):
     # number of predictions per time step = num_joints * angle representation
     # shape is (batch_size, seq_len, num_predictions)
     _, tgt_len, num_predictions = next(iter(dataset["train"]))[1].shape
-    model = None
     start_epoch = 0
     # Load in the desired model
     model = utils.prepare_model(
