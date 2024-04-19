@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import torch
-
+from torch.cuda.amp import autocast
 
 def eval(model, criterion, dataset, batch_size, device):
     """
@@ -19,20 +19,21 @@ def eval(model, criterion, dataset, batch_size, device):
                 tgt_seqs.to(device),
                 seed_tgt_seqs.to(device),
             )
-            outputs = model(
-                src_seqs,
-                seed_tgt_seqs,
-                max_len=max_len,
-                teacher_forcing_ratio=0,
-            )
+            
+            with autocast():
+                outputs = model(
+                    src_seqs,
+                    seed_tgt_seqs,
+                    max_len=max_len,
+                    teacher_forcing_ratio=0,
+                )
 
-            if device == "mps":
+
                 outputs = outputs.float()
-            else:
-                outputs = outputs.double()
 
-            loss = criterion(outputs, tgt_seqs)
-            eval_loss += loss.item()
+                # Calculate the main loss
+                loss = criterion(outputs, tgt_seqs)
+                eval_loss += loss.item()
         return eval_loss / ((iterations + 1) * batch_size)
 
 
@@ -48,7 +49,4 @@ def generate(model, src_seqs, max_len, device):
         outputs = model(
             src_seqs, tgt_seqs, max_len=max_len, teacher_forcing_ratio=0
         )
-        if device == "mps":
-            return outputs.float()
-        else:
-            return outputs.double()
+        return outputs.float()

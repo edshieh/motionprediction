@@ -27,12 +27,8 @@ class Dataset(data.Dataset):
         tgt_seq = (self.tgt_seqs[index] - self.mean) / (
             self.std + constants.EPSILON
         )
-        if self.device == "mps":
-            src_seq = torch.Tensor(src_seq).to(device=self.device).float()
-            tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
-        else:
-            src_seq = torch.Tensor(src_seq).to(device=self.device).double()
-            tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).double()
+        src_seq = torch.Tensor(src_seq).to(device=self.device).float()
+        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
         return src_seq, tgt_seq
 
     def __len__(self):
