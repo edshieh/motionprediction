@@ -157,8 +157,8 @@ def train(args: argparse.Namespace):
         # referenced : https://discuss.pytorch.org/t/how-to-load-model-weights-that-are-stored-as-an-ordereddict/75500/4
         # https://pytorch.org/tutorials/recipes/recipes/saving_and_loading_a_general_checkpoint.html
         state_dict = load_from_last_saved_model(args.save_model_path, device)
-        args.epochs += state_dict["epoch"] + 1
-        start_epoch = state_dict["epoch"] + 1
+        args.epochs += state_dict["epoch"]
+        start_epoch = state_dict["epoch"]
         model.load_state_dict(state_dict["model_state_dict"])
         optimizer_state_dict = state_dict["optimizer_state_dict"]
         LOGGER.info(f"Setting epoch to continue from {start_epoch}, new max epoch: {args.epochs}")
