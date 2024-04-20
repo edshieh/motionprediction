@@ -294,15 +294,15 @@ def load_from_last_saved_model(save_model_path: str, device: str):
     LOGGER.info(f"Loading from {save_model_path}")
     regex = re.compile("^([0-9]*).model")
     files = os.listdir(save_model_path)
-    models = sorted([f for f in files if regex.match(f)])
-    if not models:
+    epoch_and_models = [[int(regex.match(fname).group(1)),fname] for fname in files if regex.match(fname)]
+    if not epoch_and_models:
       msg = f"Last saved model not found. {files}"
       LOGGER.error(msg)
       raise Exception(msg)
-    last_saved_model = models[-1]
-    # loaded epoch + 1
+    sorted_models = sorted(epoch_and_models, key=lambda m: m[0])
+    start_epoch, last_saved_model = sorted_models[-1]
     last_model_path = Path(save_model_path / last_saved_model)
-    LOGGER.info(f"Loading {last_model_path=}")
+    LOGGER.info(f"Loading {last_model_path=}, {start_epoch=}")
     return torch.load(last_model_path, device)
 
 def validate_args(args: argparse.Namespace):
