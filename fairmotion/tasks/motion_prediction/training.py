@@ -158,6 +158,7 @@ def train(args: argparse.Namespace):
         # https://pytorch.org/tutorials/recipes/recipes/saving_and_loading_a_general_checkpoint.html
         state_dict = load_from_last_saved_model(args.save_model_path, device)
         args.epochs += state_dict["epoch"] + 1
+        start_epoch = state_dict["epoch"] + 1
         model.load_state_dict(state_dict["model_state_dict"])
         optimizer_state_dict = state_dict["optimizer_state_dict"]
         LOGGER.info(f"Setting epoch to continue from {start_epoch}, new max epoch: {args.epochs}")
