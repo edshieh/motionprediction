@@ -191,7 +191,7 @@ def train(args: argparse.Namespace):
     torch.autograd.set_detect_anomaly(True)
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
     if optimizer_state_dict:
-        opt.load_state_dict(optimizer_state_dict)
+        opt.optimizer.load_state_dict(optimizer_state_dict)
     for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
         model.train()
@@ -271,7 +271,7 @@ def train(args: argparse.Namespace):
             current_state_dicts = { 
                     "epoch": epoch+1,
                     "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": opt.state_dict(),
+                    "optimizer_state_dict": opt.optimizer.state_dict(),
             }
             torch.save(
                 current_state_dicts, str(args.save_model_path.joinpath(f"{epoch+1}.model"))
