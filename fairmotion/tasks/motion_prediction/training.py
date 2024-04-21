@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from shutil import rmtree
 
+from accelerate import Accelerator, DistributedDataParallelKwargs
+
+
 from fairmotion.models import (  # Used for typing
     rnn,
     seq2seq,
@@ -24,7 +27,7 @@ from fairmotion.models import (  # Used for typing
 from fairmotion.tasks.motion_prediction import generate, utils, test
 from fairmotion.utils import utils as fairmotion_utils
 
-from typing import Any, Callable, Dict, Iterable, List, Tuple
+from typing import Dict, List
 
 
 # Set environment variable for MPS fallback
@@ -182,6 +185,11 @@ def train(args: argparse.Namespace):
     LOGGER.info("Training model...")
     torch.autograd.set_detect_anomaly(True)
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
+    
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    LOGGER.info(f'Num Processes: {accelerator.num_processes}; Device: {accelerator.device}; Process Index: {accelerator.process_index}')
+    model, opt, dataset["train"] = accelerator.prepare(model, opt, dataset["train"])
     for epoch in range(args.epochs):
         epoch_loss = 0
         model.train()
@@ -198,6 +206,7 @@ def train(args: argparse.Namespace):
         )
 
         num_iterations = len(dataset["train"])
+        
         for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
             # print(f"Iteration: {iterations}/{num_iterations}")
             if args.scheduler:
@@ -218,7 +227,7 @@ def train(args: argparse.Namespace):
                     utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
                 )
 
-            scaler.scale(loss).backward()
+            accelerator.backward(scaler.scale(loss))
             scaler.step(opt.optimizer)
             scaler.update()
             epoch_loss += loss.item()
@@ -250,13 +259,14 @@ def train(args: argparse.Namespace):
                 max_len=tgt_len,
             )
             LOGGER.info(f"Validation MAE: {mae}")
-            torch.save(
+            accelerator.save(
                 model.state_dict(), str(args.save_model_path.joinpath(f"{epoch}.model"))
             )
             if len(val_losses) == 0 or val_loss <= min(val_losses):
-                torch.save(
+                accelerator.save(
                     model.state_dict(), str(args.save_model_path.joinpath("best.model"))
                 )
+                
     return training_losses, val_losses
 
 
@@ -273,6 +283,7 @@ def validate_args(args: argparse.Namespace):
     if not args.preprocessed_path.is_dir():
         raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
 
+    args.save_model_path = args.save_model_path.joinpath(f"{os.getpid()}")
     if args.save_model_path.exists():
         if args.force:
             print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
@@ -438,5 +449,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
     main(args)
