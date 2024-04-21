@@ -10,6 +10,7 @@ setup(
     author="FAIR Pittsburgh",
     author_email="dgopinath@fb.com",
     install_requires=[
+        "accelerate==0.29.2",
         "black",
         "dataclasses",  # py3.6 backport required by human_body_prior
         "matplotlib",
