@@ -379,6 +379,8 @@ if __name__ == "__main__":
             "transformer",
             "transformer_encoder",
             "rnn",
+            "STtransformer",
+            "moe"
         ],
     )
     args = parser.parse_args()
