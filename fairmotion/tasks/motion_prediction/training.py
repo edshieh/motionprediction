@@ -106,7 +106,10 @@ def get_initial_epoch_and_validation_loss(
 
 
 def train(args: argparse.Namespace):
-    args.device = fairmotion_utils.set_device(args.device) # reset this so the logged config shows the device used
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    
+    args.device = accelerator.device # reset this so the logged config shows the device used
     LOGGER.info(args._get_kwargs())
     utils.log_config(args.save_model_path, args._get_kwargs())
 
@@ -186,8 +189,6 @@ def train(args: argparse.Namespace):
     torch.autograd.set_detect_anomaly(True)
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
     
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     LOGGER.info(f'Num Processes: {accelerator.num_processes}; Device: {accelerator.device}; Process Index: {accelerator.process_index}')
     model, opt, dataset["train"] = accelerator.prepare(model, opt, dataset["train"])
     for epoch in range(args.epochs):
