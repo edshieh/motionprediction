@@ -188,7 +188,7 @@ def prepare_model(
 
 
 def log_config(path: Path, args_dict: List[Tuple[str, Any]]) -> None:
-    with open(path.joinpath("config.txt"), "w") as f:
+    with open(path.joinpath(f"config_{os.getpid()}.txt"), "w") as f:
         for key, value in args_dict:
             f.write(f"{f'{key}:': <24}{value}\n")
 

@@ -53,7 +53,7 @@ def configure_logging(model_architecture: str, model_save_path: Path):
 
     LOGGER.setLevel(logging.INFO)
 
-    log_file = model_save_path.joinpath(f"training_{model_architecture}.log")
+    log_file = model_save_path.joinpath(f"training_{model_architecture}_{os.getpid()}.log")
     if log_file.exists():
         log_file.unlink()
     fileHandler = logging.FileHandler(log_file)
@@ -199,10 +199,12 @@ def train(args: argparse.Namespace):
     LOGGER.info("Training model...")
     torch.autograd.set_detect_anomaly(True)
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
-    
+    if optimizer_state_dict:
+        opt.optimizer.load_state_dict(optimizer_state_dict)
+
     LOGGER.info(f'Num Processes: {accelerator.num_processes}; Device: {accelerator.device}; Process Index: {accelerator.process_index}')
     model, opt, dataset["train"] = accelerator.prepare(model, opt, dataset["train"])
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
         model.train()
 
@@ -314,19 +316,6 @@ def validate_args(args: argparse.Namespace):
     # validate provided options
     if not args.preprocessed_path.is_dir():
         raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
-
-    if not args.load_from_last_model and args.save_model_path.exists():
-        if args.force:
-            print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
-            rmtree(args.save_model_path)
-        else:
-            yes_no_response = fairmotion_utils.yes_no_input(f"Directory {args.save_model_path} already exists. \nDo you want to delete? (yes/y or no/n): ")
-            if yes_no_response:
-                print(f"Removing directory {args.save_model_path} with user input.")
-                rmtree(args.save_model_path)
-            else:
-                print("Not deleting directory. Please change config value for '--save-model-path'\n")
-                sys.exit()
 
 def main(args: argparse.Namespace):
     validate_args(args)
