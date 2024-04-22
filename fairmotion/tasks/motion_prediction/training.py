@@ -6,6 +6,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import re
 import random
 import torch
 import torch.nn as nn
@@ -145,7 +146,7 @@ def train(args: argparse.Namespace):
     # number of predictions per time step = num_joints * angle representation
     # shape is (batch_size, seq_len, num_predictions)
     _, tgt_len, num_predictions = next(iter(dataset["train"]))[1].shape
-
+    start_epoch = 0
     # Load in the desired model
     model = utils.prepare_model(
         input_dim=num_predictions,
@@ -159,7 +160,16 @@ def train(args: argparse.Namespace):
         dropout=args.dropout,
         num_experts=args.num_experts
     )
-
+    optimizer_state_dict = None
+    if args.load_from_last_model:
+        # referenced : https://discuss.pytorch.org/t/how-to-load-model-weights-that-are-stored-as-an-ordereddict/75500/4
+        # https://pytorch.org/tutorials/recipes/recipes/saving_and_loading_a_general_checkpoint.html
+        state_dict = load_from_last_saved_model(args.save_model_path, device)
+        args.epochs += state_dict["epoch"]
+        start_epoch = state_dict["epoch"]
+        model.load_state_dict(state_dict["model_state_dict"])
+        optimizer_state_dict = state_dict["optimizer_state_dict"]
+        LOGGER.info(f"Setting epoch to continue from {start_epoch}, new max epoch: {args.epochs}")
     if device == "mps":
         LOGGER.info(
             "MPS Current allocated memory after model load: "
@@ -171,7 +181,8 @@ def train(args: argparse.Namespace):
         )
 
     criterion = nn.MSELoss()
-    model.init_weights()
+    if not args.load_from_last_model:
+        model.init_weights()
     training_losses, val_losses = [], []
     scaler = GradScaler()
 
@@ -248,7 +259,7 @@ def train(args: argparse.Namespace):
         )
 
         # Get validation MAE if we are at save frequency and the final
-        if epoch % args.save_model_frequency == 0 or epoch + 1 == args.epochs:
+        if epoch+1 % args.save_model_frequency == 0 or epoch + 1 == args.epochs:
             rep = args.preprocessed_path.name
             _, mae = test.test_model(
                 model=model,
@@ -260,32 +271,51 @@ def train(args: argparse.Namespace):
                 max_len=tgt_len,
             )
             LOGGER.info(f"Validation MAE: {mae}")
+            current_state_dicts = { 
+                    "epoch": epoch+1,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": opt.optimizer.state_dict(),
+            }
             accelerator.save(
-                model.state_dict(), str(args.save_model_path.joinpath(f"{epoch}.model"))
+                current_state_dicts, str(args.save_model_path.joinpath(f"{epoch+1}.model"))
             )
             if len(val_losses) == 0 or val_loss <= min(val_losses):
                 accelerator.save(
-                    model.state_dict(), str(args.save_model_path.joinpath("best.model"))
+                    current_state_dicts, str(args.save_model_path.joinpath("best.model"))
                 )
                 
     return training_losses, val_losses
 
 
 def plot_curves(args: argparse.Namespace, training_losses: List[float], val_losses: List[float]):
+
     plt.plot(range(len(training_losses)), training_losses)
     plt.plot(range(len(val_losses)), val_losses)
     plt.ylabel("MSE Loss")
     plt.xlabel("Epoch")
     plt.savefig(args.save_model_path.joinpath("loss.svg"), format="svg")
 
+def load_from_last_saved_model(save_model_path: str, device: str):
+    LOGGER.info(f"Loading from {save_model_path}")
+    regex = re.compile("^([0-9]*).model")
+    files = os.listdir(save_model_path)
+    epoch_and_models = [[int(regex.match(fname).group(1)),fname] for fname in files if regex.match(fname)]
+    if not epoch_and_models:
+      msg = f"Last saved model not found. {files}"
+      LOGGER.error(msg)
+      raise Exception(msg)
+    sorted_models = sorted(epoch_and_models, key=lambda m: m[0])
+    start_epoch, last_saved_model = sorted_models[-1]
+    last_model_path = Path(save_model_path / last_saved_model)
+    LOGGER.info(f"Loading {last_model_path=}, {start_epoch=}")
+    return torch.load(last_model_path, device)
 
 def validate_args(args: argparse.Namespace):
     # validate provided options
     if not args.preprocessed_path.is_dir():
         raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
 
-    args.save_model_path = args.save_model_path.joinpath(f"{os.getpid()}")
-    if args.save_model_path.exists():
+    if not args.load_from_last_model and args.save_model_path.exists():
         if args.force:
             print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
             rmtree(args.save_model_path)
@@ -447,6 +477,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Enable tuning option which keeps tfr as if epochs were 100"
+    )
+    parser.add_argument(
+        "-l", "--load-from-last-model",
+        dest="load_from_last_model",
+        action="store_true",
+        default=False,
+        help="Load state dictionary from last saved model."
     )
 
     args = parser.parse_args()
