@@ -15,6 +15,9 @@ import sys
 from pathlib import Path
 from shutil import rmtree
 
+from accelerate import Accelerator, DistributedDataParallelKwargs
+
+
 from fairmotion.models import (  # Used for typing
     rnn,
     seq2seq,
@@ -25,7 +28,7 @@ from fairmotion.models import (  # Used for typing
 from fairmotion.tasks.motion_prediction import generate, utils, test
 from fairmotion.utils import utils as fairmotion_utils
 
-from typing import Any, Callable, Dict, Iterable, List, Tuple
+from typing import Dict, List
 
 
 # Set environment variable for MPS fallback
@@ -50,7 +53,7 @@ def configure_logging(model_architecture: str, model_save_path: Path):
 
     LOGGER.setLevel(logging.INFO)
 
-    log_file = model_save_path.joinpath(f"training_{model_architecture}.log")
+    log_file = model_save_path.joinpath(f"training_{model_architecture}_{os.getpid()}.log")
     if log_file.exists():
         log_file.unlink()
     fileHandler = logging.FileHandler(log_file)
@@ -104,7 +107,10 @@ def get_initial_epoch_and_validation_loss(
 
 
 def train(args: argparse.Namespace):
-    args.device = fairmotion_utils.set_device(args.device) # reset this so the logged config shows the device used
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    
+    args.device = accelerator.device # reset this so the logged config shows the device used
     LOGGER.info(args._get_kwargs())
     utils.log_config(args.save_model_path, args._get_kwargs())
 
@@ -195,6 +201,9 @@ def train(args: argparse.Namespace):
     opt = utils.prepare_optimizer(model, args.optimizer, args.lr)
     if optimizer_state_dict:
         opt.optimizer.load_state_dict(optimizer_state_dict)
+
+    LOGGER.info(f'Num Processes: {accelerator.num_processes}; Device: {accelerator.device}; Process Index: {accelerator.process_index}')
+    model, opt, dataset["train"] = accelerator.prepare(model, opt, dataset["train"])
     for epoch in range(start_epoch, args.epochs):
         epoch_loss = 0
         model.train()
@@ -211,6 +220,7 @@ def train(args: argparse.Namespace):
         )
 
         num_iterations = len(dataset["train"])
+        
         for iterations, (src_seqs, tgt_seqs) in enumerate(dataset["train"]):
             # print(f"Iteration: {iterations}/{num_iterations}")
             if args.scheduler:
@@ -231,7 +241,7 @@ def train(args: argparse.Namespace):
                     utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
                 )
 
-            scaler.scale(loss).backward()
+            accelerator.backward(scaler.scale(loss))
             scaler.step(opt.optimizer)
             scaler.update()
             epoch_loss += loss.item()
@@ -268,13 +278,14 @@ def train(args: argparse.Namespace):
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": opt.optimizer.state_dict(),
             }
-            torch.save(
+            accelerator.save(
                 current_state_dicts, str(args.save_model_path.joinpath(f"{epoch+1}.model"))
             )
             if len(val_losses) == 0 or val_loss <= min(val_losses):
-                torch.save(
+                accelerator.save(
                     current_state_dicts, str(args.save_model_path.joinpath("best.model"))
                 )
+                
     return training_losses, val_losses
 
 
@@ -305,19 +316,6 @@ def validate_args(args: argparse.Namespace):
     # validate provided options
     if not args.preprocessed_path.is_dir():
         raise ValueError(f"Value given for '--prepocessed-path' must be a directory. Given: {args.preprocessed_path}")
-
-    if not args.load_from_last_model and args.save_model_path.exists():
-        if args.force:
-            print(f"'Force' enabled. Removing directory {args.save_model_path} without user input.")
-            rmtree(args.save_model_path)
-        else:
-            yes_no_response = fairmotion_utils.yes_no_input(f"Directory {args.save_model_path} already exists. \nDo you want to delete? (yes/y or no/n): ")
-            if yes_no_response:
-                print(f"Removing directory {args.save_model_path} with user input.")
-                rmtree(args.save_model_path)
-            else:
-                print("Not deleting directory. Please change config value for '--save-model-path'\n")
-                sys.exit()
 
 def main(args: argparse.Namespace):
     validate_args(args)
@@ -478,5 +476,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
     main(args)
