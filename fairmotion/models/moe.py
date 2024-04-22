@@ -42,7 +42,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
         self.moe = SoftMoE(
             dim = ninp*24,
-            seq_len = 16*num_experts,
+            seq_len = num_experts**2,
             num_experts = num_experts
         )
 
