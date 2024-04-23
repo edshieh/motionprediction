@@ -10,7 +10,6 @@ import re
 import random
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
 import sys
 from pathlib import Path
 from shutil import rmtree
@@ -184,7 +183,6 @@ def train(args: argparse.Namespace):
     if not args.load_from_last_model:
         model.init_weights()
     training_losses, val_losses = [], []
-    scaler = GradScaler()
 
     # Log model loss before any training
     # epoch_loss, val_loss = get_initial_epoch_and_validation_loss(
@@ -228,22 +226,21 @@ def train(args: argparse.Namespace):
             opt.optimizer.zero_grad()
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
 
-            with autocast():
-                outputs = model(
-                    src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
-                )
+            outputs = model(
+                src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
+            )
 
-                outputs = outputs.float()
+            outputs = outputs.float()
 
-                # Calculate the main loss
-                loss = criterion(
-                    outputs,
-                    utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
-                )
+            # Calculate the main loss
+            loss = criterion(
+                outputs,
+                utils.prepare_tgt_seqs(args.architecture, src_seqs, tgt_seqs),
+            )
 
-            accelerator.backward(scaler.scale(loss))
-            scaler.step(opt.optimizer)
-            scaler.update()
+            accelerator.backward(loss)
+            opt.step()
+
             epoch_loss += loss.item()
 
         epoch_loss = epoch_loss / num_training_sequences
@@ -261,7 +258,7 @@ def train(args: argparse.Namespace):
         )
 
         # Get validation MAE if we are at save frequency and the final
-        if epoch+1 % args.save_model_frequency == 0 or epoch + 1 == args.epochs:
+        if epoch % args.save_model_frequency == 0 or epoch + 1 == args.epochs:
             rep = args.preprocessed_path.name
             _, mae = test.test_model(
                 model=model,
