@@ -32,7 +32,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 LOGGER = logging.getLogger(__name__)
 
-def configure_logging(model_architecture: str, model_save_path: Path):
+def configure_logging():
     global LOGGER
     logFormatter = logging.Formatter(
         fmt="[%(asctime)s] %(message)s",
@@ -40,13 +40,6 @@ def configure_logging(model_architecture: str, model_save_path: Path):
     )
 
     LOGGER.setLevel(logging.INFO)
-
-    log_file = model_save_path.joinpath(f"test_{model_architecture}.log")
-    if log_file.exists():
-        log_file.unlink()
-    fileHandler = logging.FileHandler(log_file)
-    fileHandler.setFormatter(logFormatter)
-    LOGGER.addHandler(fileHandler)
 
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
@@ -171,7 +164,7 @@ def test_model(
 
 
 def main(args: argparse.Namespace):
-    configure_logging(args.architecture, args.save_model_path)
+    configure_logging()
     device = fairmotion_utils.set_device(args.device)
     LOGGER.info(f"Using device: {device}")
 
@@ -191,8 +184,8 @@ def main(args: argparse.Namespace):
 
     # Define architecture configurations
     configurations = [
-        ('STtransformer', [16, 32, 64, 128]),
-        ('moe', [16, 32, 64, 128])
+        ('STtransformer', [128, 256, 512, 1024]),
+        ('moe', [2, 4, 6, 8])
     ]
 
     for architecture, params in configurations:
@@ -212,13 +205,12 @@ def main(args: argparse.Namespace):
                 num_heads = args.num_heads,
                 src_len=120,
                 ninp = args.ninp,
-                dropout=args.dropout,
                 num_experts=args.num_experts
             )
 
             model.init_weights()
 
-            LOGGER.info("Running model")
+            LOGGER.info(f"Running {architecture} with param {param} and {args.num_layers} layers and ninp {args.ninp} and batch {args.batch_size}")
             rep = args.preprocessed_path.name
 
             start_time = time.time()
