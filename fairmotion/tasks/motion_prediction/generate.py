@@ -38,7 +38,7 @@ def eval(model, criterion, dataset, batch_size, device, src_len):
         return eval_loss / ((iterations + 1) * batch_size)
 
 
-def generate(model, src_seqs, max_len, device, src_len):
+def generate(model, src_seqs, max_len, device):
     """
     Generates output sequences for given input sequences by running forward
     pass through the given model
@@ -46,7 +46,6 @@ def generate(model, src_seqs, max_len, device, src_len):
     model.eval()
     with torch.no_grad():
         tgt_seqs = src_seqs[:, -1].unsqueeze(1)
-        src_seqs = src_seqs[:, -src_len:, :]
         src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
         outputs = model(
             src_seqs, tgt_seqs, max_len=max_len, teacher_forcing_ratio=0
