@@ -58,7 +58,8 @@ def prepare_model(
     hidden_dim: int,
     num_layers: int,
     architecture: str,
-    device: str
+    device: str,
+    src_len: int
 ) -> (
     rnn.RNN |
     seq2seq.Seq2Seq |
@@ -74,6 +75,7 @@ def prepare_model(
         device=device,
         num_layers=num_layers,
         architecture=architecture,
+        src_len=src_len
     )
     model.load_state_dict(torch.load(path))
     model.eval()
@@ -100,6 +102,7 @@ def run_model(
     src_seqs, tgt_seqs = [], []
     for src_seq, tgt_seq in data_iter:
         max_len = max_len if max_len else tgt_seq.shape[1]
+        src_seq = src_seq[:, -args.src_len:, :]
         src_seqs.extend(src_seq.to(device="cpu").numpy())
         tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
         pred_seq = (
@@ -244,6 +247,7 @@ def main(args: argparse.Namespace):
         num_layers=args.num_layers,
         architecture=args.architecture,
         device=device,
+        src_len=args.src_len
     )
 
     LOGGER.info("Running model")
@@ -289,6 +293,13 @@ if __name__ == "__main__":
         type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to store predicted motion",
         default=None,
+    )
+    parser.add_argument(
+        "--src_len",
+        dest="src_len",
+        type=int,
+        help="Input size for predictions. Needs to match what model is expecting from training.",
+        default=120
     )
     parser.add_argument(
         "--hidden-dim",
