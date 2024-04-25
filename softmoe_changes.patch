@@ -1,0 +1,22 @@
+--- soft_moe.py.backup	2024-04-25 11:53:16
++++ soft_moe.py	2024-04-25 11:55:32
+@@ -284,7 +284,8 @@
+         geglu = False,
+         is_distributed = None,
+         offload_unused_experts_to_cpu = True,
+-        use_layernorm = False
++        use_layernorm = False,
++        output_weights = False
+     ):
+         super().__init__()
+         assert exists(seq_len) ^ exists(num_slots), 'either seq_len, or num_slots must be passed into SoftMoE'
+@@ -371,5 +372,7 @@
+             out = rearrange(out, 'b h w d -> b d h w')
+         elif is_single_token:
+             out = rearrange(out, 'b 1 d -> b d')
+-
+-        return out
++        if output_weights:
++            return out, dispatch_weights, combine_weights
++        else:
++            return out
