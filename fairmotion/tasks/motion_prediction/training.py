@@ -269,6 +269,7 @@ def train(args: argparse.Namespace):
                 mean=mean,
                 std=std,
                 max_len=tgt_len,
+                src_len=args.src_len
             )
             LOGGER.info(f"Validation MAE: {mae}")
             current_state_dicts = { 
