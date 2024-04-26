@@ -6,6 +6,7 @@ import numpy as np
 import os
 import torch
 import time
+import matplotlib.pyplot as plt
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -169,9 +170,74 @@ def test_model(
 
     return seqs_T, mae
 
+def test_single_input(
+    model, 
+    input_seq, 
+    device: str, 
+    mean: float, 
+    std: float, 
+    max_len: int = None
+):
+    input_seq = input_seq.to(device)  # Send input to the appropriate device
+    pred_seq, dispatch_weights, combine_weights = model(input_seq, max_len)
+    pred_seq = pred_seq.cpu().numpy()  # Move data to CPU and convert to numpy
+    return pred_seq, dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
+
+def visualize_weights(weights, title):
+    plt.figure(figsize=(10, 5))
+    plt.imshow(weights, aspect='auto', cmap='hot')
+    plt.colorbar()
+    plt.title(title)
+    plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
+    plt.show()
+
+def prepare_model(
+    path: Path,
+    num_predictions: int,
+    hidden_dim: int,
+    device: str,
+    num_layers: int,
+    architecture: str,
+    num_heads: int=4,
+    src_len: int=120,
+    ninp: int=56,
+    num_experts: int=16
+) -> (
+    rnn.RNN |
+    seq2seq.Seq2Seq |
+    seq2seq.TiedSeq2Seq |
+    transformer.TransformerLSTMModel |
+    transformer.TransformerModel |
+    SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+    moe.moe
+):
+    model = utils.prepare_model(
+        input_dim=num_predictions,
+        hidden_dim=hidden_dim,
+        device=device,
+        num_layers=num_layers,
+        architecture=architecture,
+        num_heads = num_heads,
+        src_len=src_len,
+        ninp = ninp,
+        num_experts=num_experts
+    )
+    model.load_state_dict(torch.load(path))
+    model.eval()
+    return model
+
+def main(args):
+    device = fairmotion_utils.set_device(args.device)
+    LOGGER.info("Loading dataset")
+    dataset, mean, std = utils.prepare_dataset(
+        args.preprocessed_path.joinpath("test.pkl"),
+        batch_size=1,  # Set batch size to 1 to simplify processing
+        device=device,
+        shuffle=False  # No need to shuffle as we are only taking the first entry
+    )
 
 def main(args: argparse.Namespace):
-    configure_logging(args.architecture, args.save_model_path)
+    configure_logging()
     device = fairmotion_utils.set_device(args.device)
     LOGGER.info(f"Using device: {device}")
 
@@ -185,52 +251,37 @@ def main(args: argparse.Namespace):
         device=device,
         shuffle=args.shuffle,
     )
-    # number of predictions per time step = num_joints * angle representation
+
+    # Taking only the first sequence from the DataLoader
+    for input_seq, _ in dataset:
+        break  # Break after the first batch
+
     data_shape = next(iter(dataset["train"]))[0].shape
     num_predictions = data_shape[-1]
 
-    # Define architecture configurations
-    configurations = [
-        ('STtransformer', [16, 32, 64, 128]),
-        ('moe', [16, 32, 64, 128])
-    ]
+    LOGGER.info("Preparing model")
+    model_filename = f"{args.save_model_name}.model"
+    model_file_path = args.save_model_path.joinpath(model_filename)
+    model = prepare_model(
+        model_file_path,
+        input_dim=num_predictions,
+        hidden_dim=args.hidden_dim,
+        device=device,
+        num_layers=args.num_layers,
+        architecture=args.architecture,
+        num_heads = args.num_heads,
+        src_len=120,
+        ninp = args.ninp,
+        dropout=args.dropout,
+        num_experts=args.num_experts
+    )
 
-    for architecture, params in configurations:
-        for param in params:
-            args.architecture = architecture
-            if architecture == 'STtransformer':
-                args.hidden_dim = param
-            elif architecture == 'moe':
-                args.num_experts = param
+    pred_seq, dispatch_weights, combine_weights = test_single_input(
+        model, input_seq, device, mean, std, args.max_len
+    )
 
-            model = utils.prepare_model(
-                input_dim=num_predictions,
-                hidden_dim=args.hidden_dim,
-                device=device,
-                num_layers=args.num_layers,
-                architecture=args.architecture,
-                num_heads = args.num_heads,
-                src_len=120,
-                ninp = args.ninp,
-                dropout=args.dropout,
-                num_experts=args.num_experts
-            )
-
-            model.init_weights()
-
-            LOGGER.info("Running model")
-            rep = args.preprocessed_path.name
-
-            start_time = time.time()
-            seqs_T, mae = test_model(
-                model, dataset["test"], rep, device, mean, std, args.max_len
-            )
-            duration = time.time() - start_time
-            LOGGER.info(
-                "Test MAE: "
-                + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
-            )
-            LOGGER.info(f"Testing took {duration:.2f} seconds")
+    visualize_weights(dispatch_weights, 'Dispatch Weights')
+    visualize_weights(combine_weights, 'Combine Weights')
 
 
 
@@ -245,6 +296,20 @@ if __name__ == "__main__":
         type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to folder with pickled files from dataset",
         required=True,
+    )
+    parser.add_argument(
+        "--save-model-path",
+        dest="save_model_path",
+        # type=str,
+        type=lambda p: Path(p).expanduser().resolve(strict=True),
+        help="Path to saved models",
+        required=True,
+    )
+    parser.add_argument(
+        "--save_model_name",
+        dest="save_model_path",
+        type=str,
+        help="model name",
     )
     parser.add_argument(
         "--save-output-path",
