@@ -33,7 +33,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 LOGGER = logging.getLogger(__name__)
 
-def configure_logging(model_architecture: str, model_save_path: Path):
+def configure_logging():
     global LOGGER
     logFormatter = logging.Formatter(
         fmt="[%(asctime)s] %(message)s",
@@ -42,133 +42,9 @@ def configure_logging(model_architecture: str, model_save_path: Path):
 
     LOGGER.setLevel(logging.INFO)
 
-    log_file = model_save_path.joinpath(f"test_{model_architecture}.log")
-    if log_file.exists():
-        log_file.unlink()
-    fileHandler = logging.FileHandler(log_file)
-    fileHandler.setFormatter(logFormatter)
-    LOGGER.addHandler(fileHandler)
-
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
     LOGGER.addHandler(consoleHandler)
-
-
-def run_model(
-    model: (
-        rnn.RNN |
-        seq2seq.Seq2Seq |
-        seq2seq.TiedSeq2Seq |
-        transformer.TransformerLSTMModel |
-        transformer.TransformerModel |
-        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-        moe.moe
-    ),
-    data_iter: Dict[str, DataLoader],
-    max_len: int,
-    device: str,
-    mean: float,
-    std: float
-) -> List[np.ndarray]:
-    pred_seqs = []
-    src_seqs, tgt_seqs = [], []
-    for src_seq, tgt_seq in data_iter:
-        max_len = max_len if max_len else tgt_seq.shape[1]
-        src_seqs.extend(src_seq.to(device="cpu").numpy())
-        tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
-        pred_seq = (
-            generate.generate(model, src_seq, max_len, device)
-            .to(device="cpu")
-            .numpy()
-        )
-        pred_seqs.extend(pred_seq)
-    return [
-        utils.unnormalize(np.array(l), mean, std)
-        for l in [pred_seqs, src_seqs, tgt_seqs]
-    ]
-
-
-def save_seq(
-    i: int,
-    pred_seq: np.ndarray,
-    src_seq: np.ndarray,
-    tgt_seq: np.ndarray,
-    skel: Skeleton,
-    save_output_path: Path
-) -> None:
-    # seq_T contains pred, src, tgt data in the same order
-    motions = [
-        motion_class.Motion.from_matrix(seq, skel)
-        for seq in [pred_seq, src_seq, tgt_seq]
-    ]
-    ref_motion = motion_ops.append(motions[1], motions[2])
-    pred_motion = motion_ops.append(motions[1], motions[0])
-    bvh.save(
-        ref_motion, save_output_path.joinpath("ref", f"{i}.bvh"),
-    )
-    bvh.save(
-        pred_motion, save_output_path.joinpath("pred", f"{i}.bvh"),
-    )
-
-
-def convert_to_T(
-    pred_seqs: np.ndarray,
-    src_seqs: np.ndarray,
-    tgt_seqs: np.ndarray,
-    rep: str
-) -> List[np.ndarray]:
-    ops = utils.convert_fn_to_R(rep)
-    seqs_T = [
-        conversions.R2T(utils.apply_ops(seqs, ops))
-        for seqs in [pred_seqs, src_seqs, tgt_seqs]
-    ]
-    return seqs_T
-
-
-def calculate_metrics(
-    pred_seqs: np.ndarray,
-    tgt_seqs: np.ndarray
-) -> Dict[int, np.float32]:
-
-    metric_frames = [6, 12, 18, 24]
-    R_pred, _ = conversions.T2Rp(pred_seqs)
-    R_tgt, _ = conversions.T2Rp(tgt_seqs)
-    euler_error = metrics.euler_diff(
-        R_pred[:, :, amass_dip.SMPL_MAJOR_JOINTS],
-        R_tgt[:, :, amass_dip.SMPL_MAJOR_JOINTS],
-    )
-    euler_error = np.mean(euler_error, axis=0)
-    mae = {frame: np.sum(euler_error[:frame]) for frame in metric_frames}
-    return mae
-
-
-def test_model(
-    model: (
-        rnn.RNN |
-        seq2seq.Seq2Seq |
-        seq2seq.TiedSeq2Seq |
-        transformer.TransformerLSTMModel |
-        transformer.TransformerModel |
-        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-        moe.moe
-    ),
-    dataset: Dict[str, DataLoader],
-    rep: str,
-    device: str,
-    mean: float,
-    std: float,
-    max_len: int=None
-) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
-    pred_seqs, src_seqs, tgt_seqs = run_model(
-        model, dataset, max_len, device, mean, std,
-    )
-    seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
-    # Calculate metric only when generated sequence has same shape as reference
-    # target sequence
-    if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
-        mae = calculate_metrics(seqs_T[0], seqs_T[2])
-
-    return seqs_T, mae
 
 def test_single_input(
     model, 
@@ -176,18 +52,29 @@ def test_single_input(
     device: str, 
     mean: float, 
     std: float, 
-    max_len: int = None
+    max_len: int = 1
 ):
-    input_seq = input_seq.to(device)  # Send input to the appropriate device
-    pred_seq, dispatch_weights, combine_weights = model(input_seq, max_len)
-    pred_seq = pred_seq.cpu().numpy()  # Move data to CPU and convert to numpy
-    return pred_seq, dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
+    with torch.no_grad():
+        model.eval()
+        input_seq = input_seq.to(device)  # Send input to the appropriate device
+        pred_seq, dispatch_weights, combine_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
+        pred_seq = pred_seq.cpu().numpy()  # Move data to CPU and convert to numpy
+        return pred_seq, dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
 
 def visualize_weights(weights, title):
-    plt.figure(figsize=(10, 5))
-    plt.imshow(weights, aspect='auto', cmap='hot')
-    plt.colorbar()
-    plt.title(title)
+    num_plots = weights.shape[-1]  # Get the number of subplots based on the last dimension of the weights tensor
+
+    fig, axs = plt.subplots(1, num_plots, figsize=(15, 5))  # Create subplots
+    
+    for i in range(num_plots):
+        heatmap = torch.tensor(weights[0, :, i, i])  # Convert NumPy array to PyTorch tensor
+        axs[i].imshow(heatmap.unsqueeze(0), aspect='auto', cmap='hot')  # Display the heatmap
+        axs[i].set_title(f'Subplot {i+1}')  # Set title for the subplot
+        axs[i].set_xlabel('Index')  # Set xlabel
+        axs[i].set_ylabel('Value')  # Set ylabel
+        
+    plt.suptitle(title)  # Set main title for all subplots
+    plt.tight_layout()  # Adjust layout to prevent overlap
     plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
     plt.show()
 
@@ -222,7 +109,7 @@ def prepare_model(
         ninp = ninp,
         num_experts=num_experts
     )
-    model.load_state_dict(torch.load(path))
+    model.load_state_dict(torch.load(path,map_location=torch.device('cpu'))['model_state_dict'])
     model.eval()
     return model
 
@@ -230,41 +117,28 @@ def main(args):
     device = fairmotion_utils.set_device(args.device)
     LOGGER.info("Loading dataset")
     dataset, mean, std = utils.prepare_dataset(
-        args.preprocessed_path.joinpath("test.pkl"),
+        *[
+            args.preprocessed_path.joinpath(f"{split}.pkl")
+            for split in ["train", "test", "validation"]
+        ],
         batch_size=1,  # Set batch size to 1 to simplify processing
         device=device,
         shuffle=False  # No need to shuffle as we are only taking the first entry
     )
 
-def main(args: argparse.Namespace):
-    configure_logging()
-    device = fairmotion_utils.set_device(args.device)
-    LOGGER.info(f"Using device: {device}")
+    input_seq =  next(iter(dataset["test"]))[0]
 
-    LOGGER.info("Preparing dataset")
-    dataset, mean, std = utils.prepare_dataset(
-        *[
-            args.preprocessed_path.joinpath(f"{split}.pkl")
-            for split in ["train", "test", "validation"]
-        ],
-        batch_size=args.batch_size,
-        device=device,
-        shuffle=args.shuffle,
-    )
-
-    # Taking only the first sequence from the DataLoader
-    for input_seq, _ in dataset:
-        break  # Break after the first batch
-
-    data_shape = next(iter(dataset["train"]))[0].shape
+    data_shape = next(iter(dataset["test"]))[0].shape
     num_predictions = data_shape[-1]
+    print(data_shape)
+    print(num_predictions)
 
     LOGGER.info("Preparing model")
     model_filename = f"{args.save_model_name}.model"
     model_file_path = args.save_model_path.joinpath(model_filename)
     model = prepare_model(
         model_file_path,
-        input_dim=num_predictions,
+        num_predictions=num_predictions,
         hidden_dim=args.hidden_dim,
         device=device,
         num_layers=args.num_layers,
@@ -272,10 +146,9 @@ def main(args: argparse.Namespace):
         num_heads = args.num_heads,
         src_len=120,
         ninp = args.ninp,
-        dropout=args.dropout,
         num_experts=args.num_experts
     )
-
+    model.eval()
     pred_seq, dispatch_weights, combine_weights = test_single_input(
         model, input_seq, device, mean, std, args.max_len
     )
@@ -306,10 +179,11 @@ if __name__ == "__main__":
         required=True,
     )
     parser.add_argument(
-        "--save_model_name",
-        dest="save_model_path",
+        "--save-model-name",
+        dest="save_model_name",
         type=str,
         help="model name",
+        required=True,
     )
     parser.add_argument(
         "--save-output-path",
@@ -369,13 +243,6 @@ if __name__ == "__main__":
         "--shuffle",
         action='store_true',
         help="Use this option to enable shuffling",
-    )
-    parser.add_argument(
-        "--epoch",
-        type=int,
-        help="Model from epoch to test, will test on best"
-        " model if not specified",
-        default=None,
     )
     parser.add_argument(
         "--device",
