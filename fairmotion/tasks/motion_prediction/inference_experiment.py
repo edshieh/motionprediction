@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import os
 import torch
+import time
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -31,7 +32,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 LOGGER = logging.getLogger(__name__)
 
-def configure_logging(model_architecture: str, model_save_path: Path):
+def configure_logging():
     global LOGGER
     logFormatter = logging.Formatter(
         fmt="[%(asctime)s] %(message)s",
@@ -40,52 +41,9 @@ def configure_logging(model_architecture: str, model_save_path: Path):
 
     LOGGER.setLevel(logging.INFO)
 
-    log_file = model_save_path.joinpath(f"test_{model_architecture}.log")
-    if log_file.exists():
-        log_file.unlink()
-    fileHandler = logging.FileHandler(log_file)
-    fileHandler.setFormatter(logFormatter)
-    LOGGER.addHandler(fileHandler)
-
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
     LOGGER.addHandler(consoleHandler)
-
-
-def prepare_model(
-    path: Path,
-    num_predictions: int,
-    hidden_dim: int,
-    device: str,
-    num_layers: int,
-    architecture: str,
-    num_heads: int=4,
-    src_len: int=120,
-    ninp: int=56,
-    num_experts: int=16
-) -> (
-    rnn.RNN |
-    seq2seq.Seq2Seq |
-    seq2seq.TiedSeq2Seq |
-    transformer.TransformerLSTMModel |
-    transformer.TransformerModel |
-    SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-    moe.moe
-):
-    model = utils.prepare_model(
-        input_dim=num_predictions,
-        hidden_dim=hidden_dim,
-        device=device,
-        num_layers=num_layers,
-        architecture=architecture,
-        num_heads = num_heads,
-        src_len=src_len,
-        ninp = ninp,
-        num_experts=num_experts
-    )
-    model.load_state_dict(torch.load(path))
-    model.eval()
-    return model
 
 
 def run_model(
@@ -102,14 +60,12 @@ def run_model(
     max_len: int,
     device: str,
     mean: float,
-    std: float,
-    src_len: int
+    std: float
 ) -> List[np.ndarray]:
     pred_seqs = []
     src_seqs, tgt_seqs = [], []
     for src_seq, tgt_seq in data_iter:
         max_len = max_len if max_len else tgt_seq.shape[1]
-        src_seq = src_seq[:, -src_len:, :]
         src_seqs.extend(src_seq.to(device="cpu").numpy())
         tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
         pred_seq = (
@@ -161,24 +117,6 @@ def convert_to_T(
     return seqs_T
 
 
-def save_motion_files(seqs_T: List[np.ndarray], save_output_path: Path):
-    idxs_to_save = [i for i in range(0, len(seqs_T[0]), len(seqs_T[0]) // 10)]
-    amass_dip_motion = amass_dip.load(
-        file=None, load_skel=True, load_motion=False,
-    )
-
-    fairmotion_utils.create_dir_if_absent(save_output_path.joinpath("ref"))
-    fairmotion_utils.create_dir_if_absent(save_output_path.joinpath("pred"))
-
-    pool = Pool(10)
-    indices = range(len(seqs_T[0]))
-    skels = [amass_dip_motion.skel for _ in indices]
-    save_output_paths = [save_output_path for _ in indices]
-    pool.starmap(
-        save_seq, [list(zip(indices, *seqs_T, skels, save_output_paths))[i] for i in idxs_to_save]
-    )
-
-
 def calculate_metrics(
     pred_seqs: np.ndarray,
     tgt_seqs: np.ndarray
@@ -211,23 +149,24 @@ def test_model(
     device: str,
     mean: float,
     std: float,
-    max_len: int,
-    src_len: int
+    max_len: int=None
 ) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
+    start_time = time.time()
     pred_seqs, src_seqs, tgt_seqs = run_model(
-        model, dataset, max_len, device, mean, std, src_len
+        model, dataset, max_len, device, mean, std,
     )
+    duration = time.time() - start_time
     seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
     # Calculate metric only when generated sequence has same shape as reference
     # target sequence
     if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
         mae = calculate_metrics(seqs_T[0], seqs_T[2])
 
-    return seqs_T, mae
+    return seqs_T, mae, duration
 
 
 def main(args: argparse.Namespace):
-    configure_logging(args.architecture, args.save_model_path)
+    configure_logging()
     device = fairmotion_utils.set_device(args.device)
     LOGGER.info(f"Using device: {device}")
 
@@ -245,38 +184,48 @@ def main(args: argparse.Namespace):
     data_shape = next(iter(dataset["train"]))[0].shape
     num_predictions = data_shape[-1]
 
-    LOGGER.info("Preparing model")
-    model_filename = f"{args.epoch if args.epoch else 'best'}.model"
-    model_file_path = args.save_model_path.joinpath(model_filename)
-    model = prepare_model(
-        model_file_path,
-        input_dim=num_predictions,
-        hidden_dim=args.hidden_dim,
-        device=device,
-        num_layers=args.num_layers,
-        architecture=args.architecture,
-        device=device,
-        src_len=args.src_len
-        num_heads = args.num_heads,
-        ninp = args.ninp,
-        dropout=args.dropout,
-        num_experts=args.num_experts
-    )
+    # Define architecture configurations
+    configurations = [
+        ('STtransformer', [128, 256, 512, 1024]),
+        ('moe', [2, 4, 6, 8])
+    ]
 
-    LOGGER.info("Running model")
-    rep = args.preprocessed_path.name
+    for architecture, params in configurations:
+        for param in params:
+            args.architecture = architecture
+            if architecture == 'STtransformer':
+                args.hidden_dim = param
+            elif architecture == 'moe_experiment':
+                args.num_experts = param
 
-    seqs_T, mae = test_model(
-        model, dataset["test"], rep, device, mean, std, args.max_len, args.src_len
-    )
-    LOGGER.info(
-        "Test MAE: "
-        + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
-    )
+            model = utils.prepare_model(
+                input_dim=num_predictions,
+                hidden_dim=args.hidden_dim,
+                device=device,
+                num_layers=args.num_layers,
+                architecture=args.architecture,
+                num_heads = args.num_heads,
+                src_len=120,
+                ninp = args.ninp,
+                num_experts=args.num_experts
+            )
 
-    if args.save_output_path:
-        LOGGER.info("Saving results")
-        save_motion_files(seqs_T, args.save_output_path)
+            model.init_weights()
+
+            LOGGER.info(f"Running {architecture} with param {param} and {args.num_layers} layers and ninp {args.ninp} and batch {args.batch_size}")
+            rep = args.preprocessed_path.name
+
+            # start_time = time.time()
+            seqs_T, mae, duration = test_model(
+                model, dataset["test"], rep, device, mean, std, args.max_len
+            )
+            # duration = time.time() - start_time
+            LOGGER.info(
+                "Test MAE: "
+                + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
+            )
+            LOGGER.info(f"Testing took {duration:.2f} seconds")
+
 
 
 if __name__ == "__main__":
@@ -292,27 +241,12 @@ if __name__ == "__main__":
         required=True,
     )
     parser.add_argument(
-        "--save-model-path",
-        dest="save_model_path",
-        # type=str,
-        type=lambda p: Path(p).expanduser().resolve(strict=True),
-        help="Path to saved models",
-        required=True,
-    )
-    parser.add_argument(
         "--save-output-path",
         dest="save_output_path",
         # type=str,
         type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to store predicted motion",
         default=None,
-    )
-    parser.add_argument(
-        "--src_len",
-        dest="src_len",
-        type=int,
-        help="Input size for predictions. Needs to match what model is expecting from training.",
-        default=120
     )
     parser.add_argument(
         "--hidden-dim",
@@ -391,7 +325,8 @@ if __name__ == "__main__":
             "transformer_encoder",
             "rnn",
             "STtransformer",
-            "moe"
+            "moe",
+            "moe_experiment"
         ],
     )
     args = parser.parse_args()
