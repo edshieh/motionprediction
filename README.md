@@ -1,26 +1,35 @@
-# fairmotion
+# motionprediction
+TO DO
 
-fairmotion provides easy-to-use interfaces and tools to work with motion capture data. The objective of the library is to manage the complexity of motion representation, 3D transformations, file formats and visualization, and let users focus on high level learning tasks. 
-
-Users can take advantage of large high-quality motion capture datasets like the [CMU](http://mocap.cs.cmu.edu/) and [AMASS](https://amass.is.tue.mpg.de/) datasets without deep knowledge of the domain or handling the idiosyncrasies of individual datasets. We implement baselines for research tasks using building blocks from the library to demonstrate its utility.
-
-<img src="fairmotion/viz/samples/anim_viz.gif" width="500"><img src="fairmotion/viz/samples/anim_smpl.gif" width="330">
 
 ## Getting Started
 
 ### Installation
 
-farmotion is available on PyPI for easy installation
+motionprediction is available on PyPI for easy installation
 ```
-pip install fairmotion
+TODO
 ```
 
-To install fairmotion from source, first clone the git repository, use pip to download dependencies and build the project.
+To install motionprediction from source, first clone the git repository, use pip to download dependencies and build the project.
 ```
-$ git clone https://github.com/facebookresearch/fairmotion.git
+$ git clone TODO
 $ cd fairmotion
 $ pip install -e .
 ```
+**Locate the soft_moe_pytorch Installation Directory**
+   Find the installation directory of `soft_moe_pytorch` to correctly apply the patch:
+   ```bash
+   SM_PYTORCH_DIR=$(python -c "import soft_moe_pytorch; import os; print(os.path.dirname(soft_moe_pytorch.__file__))")
+   ```
+
+**Apply the Patch**
+   Apply the patch to `soft_moe_pytorch` with the following command:
+   ```bash
+   echo "Applying patch to soft_moe_pytorch..."
+   patch -p1 -d "$SM_PYTORCH_DIR" < softmoe_changes.patch
+   ```
+
 ### Data Loading
 
 Here, we load a motion capture file in the BVH file format in a python console. Similarly, there are loaders to import files from [ASF/AMC](https://research.cs.wisc.edu/graphics/Courses/cs-838-1999/Jeff/ASF-AMC.html), [AMASS](https://amass.is.tue.mpg.de/dataset) and [AMASS DIP](http://dip.is.tuebingen.mpg.de/pre_download) formats.
