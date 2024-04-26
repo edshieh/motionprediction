@@ -174,7 +174,7 @@ def prepare_model(
         )
     elif architecture == "transformer":
         model = transformer.TransformerModel(
-            input_dim, hidden_dim, 4, hidden_dim, num_layers,
+            input_dim, hidden_dim, 4, hidden_dim, num_layers, device
         )
     elif architecture == "moe":
         model = moe.moe(
