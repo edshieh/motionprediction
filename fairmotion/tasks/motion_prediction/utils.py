@@ -16,7 +16,8 @@ from fairmotion.models import (
     seq2seq,
     transformer,
     SpatioTemporalTransformer,
-    moe
+    moe,
+    moe_experiment
 )
 from fairmotion.tasks.motion_prediction import dataset as motion_dataset
 from fairmotion.utils import constants
@@ -179,6 +180,10 @@ def prepare_model(
         model = moe.moe(
             input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts
         )
+    elif architecture == "moe_experiment":
+        model = moe.moe(
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts
+        )
 
     model = model.to(device)
     model.zero_grad()
@@ -200,7 +205,8 @@ def prepare_optimizer(
         transformer.TransformerLSTMModel |
         transformer.TransformerModel |
         SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-        moe.moe
+        moe.moe |
+        moe_experiment.moe_experiment
     ),
     opt: str="sgd",
     lr: float=None
