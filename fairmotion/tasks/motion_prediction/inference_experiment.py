@@ -151,16 +151,18 @@ def test_model(
     std: float,
     max_len: int=None
 ) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
+    start_time = time.time()
     pred_seqs, src_seqs, tgt_seqs = run_model(
         model, dataset, max_len, device, mean, std,
     )
+    duration = time.time() - start_time
     seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
     # Calculate metric only when generated sequence has same shape as reference
     # target sequence
     if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
         mae = calculate_metrics(seqs_T[0], seqs_T[2])
 
-    return seqs_T, mae
+    return seqs_T, mae, duration
 
 
 def main(args: argparse.Namespace):
@@ -193,7 +195,7 @@ def main(args: argparse.Namespace):
             args.architecture = architecture
             if architecture == 'STtransformer':
                 args.hidden_dim = param
-            elif architecture == 'moe':
+            elif architecture == 'moe_experiment':
                 args.num_experts = param
 
             model = utils.prepare_model(
@@ -213,11 +215,11 @@ def main(args: argparse.Namespace):
             LOGGER.info(f"Running {architecture} with param {param} and {args.num_layers} layers and ninp {args.ninp} and batch {args.batch_size}")
             rep = args.preprocessed_path.name
 
-            start_time = time.time()
-            seqs_T, mae = test_model(
+            # start_time = time.time()
+            seqs_T, mae, duration = test_model(
                 model, dataset["test"], rep, device, mean, std, args.max_len
             )
-            duration = time.time() - start_time
+            # duration = time.time() - start_time
             LOGGER.info(
                 "Test MAE: "
                 + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
@@ -323,7 +325,8 @@ if __name__ == "__main__":
             "transformer_encoder",
             "rnn",
             "STtransformer",
-            "moe"
+            "moe",
+            "moe_experiment"
         ],
     )
     args = parser.parse_args()
