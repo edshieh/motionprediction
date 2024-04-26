@@ -3,7 +3,7 @@
 import torch
 from torch.cuda.amp import autocast
 
-def eval(model, criterion, dataset, batch_size, device):
+def eval(model, criterion, dataset, batch_size, device, src_len):
     """
     Evaluate the performance of the model on the provided dataset.
     Returns average loss over the dataset.
@@ -14,6 +14,7 @@ def eval(model, criterion, dataset, batch_size, device):
         for iterations, (src_seqs, tgt_seqs) in enumerate(dataset):
             max_len = tgt_seqs.shape[1]
             seed_tgt_seqs = src_seqs[:, -1].unsqueeze(1)
+            src_seqs = src_seqs[:, -src_len:, :]
             src_seqs, tgt_seqs, seed_tgt_seqs = (
                 src_seqs.to(device),
                 tgt_seqs.to(device),

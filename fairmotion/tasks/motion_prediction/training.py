@@ -100,7 +100,7 @@ def get_initial_epoch_and_validation_loss(
         epoch_loss += loss.item()
     epoch_loss = epoch_loss / num_training_sequences
     val_loss = generate.eval(
-        model, criterion, dataset["validation"], batch_size, device
+        model, criterion, dataset["validation"], batch_size, device, args.src_len
     )
     return epoch_loss, val_loss
 
@@ -154,7 +154,7 @@ def train(args: argparse.Namespace):
         num_layers=args.num_layers,
         architecture=args.architecture,
         num_heads = args.num_heads,
-        src_len=120,
+        src_len=args.src_len,
         ninp = args.ninp,
         dropout=args.dropout,
         num_experts=args.num_experts
@@ -224,6 +224,7 @@ def train(args: argparse.Namespace):
             if args.scheduler:
                 lr = update_learning_rate(opt.optimizer, iterations + epoch * num_iterations)
             opt.optimizer.zero_grad()
+            src_seqs = src_seqs[:, -args.src_len:, :]
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
 
             outputs = model(
@@ -246,7 +247,7 @@ def train(args: argparse.Namespace):
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
-            model, criterion, dataset["validation"], args.batch_size, device
+            model, criterion, dataset["validation"], args.batch_size, device, args.src_len
         )
         val_losses.append(val_loss)
         opt.epoch_step(val_loss=val_loss)
@@ -268,6 +269,7 @@ def train(args: argparse.Namespace):
                 mean=mean,
                 std=std,
                 max_len=tgt_len,
+                src_len=args.src_len
             )
             LOGGER.info(f"Validation MAE: {mae}")
             current_state_dicts = { 
@@ -339,6 +341,13 @@ if __name__ == "__main__":
         type=int,
         help="Batch size for training",
         default=64
+    )
+    parser.add_argument(
+        "--src_len",
+        dest="src_len",
+        type=int,
+        help="Last number of frames to be used for training",
+        default=120
     )
     parser.add_argument(
         "--shuffle", action='store_true',

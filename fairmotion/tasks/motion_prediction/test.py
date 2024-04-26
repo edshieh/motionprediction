@@ -102,12 +102,14 @@ def run_model(
     max_len: int,
     device: str,
     mean: float,
-    std: float
+    std: float,
+    src_len: int
 ) -> List[np.ndarray]:
     pred_seqs = []
     src_seqs, tgt_seqs = [], []
     for src_seq, tgt_seq in data_iter:
         max_len = max_len if max_len else tgt_seq.shape[1]
+        src_seq = src_seq[:, -src_len:, :]
         src_seqs.extend(src_seq.to(device="cpu").numpy())
         tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
         pred_seq = (
@@ -209,10 +211,11 @@ def test_model(
     device: str,
     mean: float,
     std: float,
-    max_len: int=None
+    max_len: int,
+    src_len: int
 ) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
     pred_seqs, src_seqs, tgt_seqs = run_model(
-        model, dataset, max_len, device, mean, std,
+        model, dataset, max_len, device, mean, std, src_len
     )
     seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
     # Calculate metric only when generated sequence has same shape as reference
@@ -252,8 +255,9 @@ def main(args: argparse.Namespace):
         device=device,
         num_layers=args.num_layers,
         architecture=args.architecture,
+        device=device,
+        src_len=args.src_len
         num_heads = args.num_heads,
-        src_len=120,
         ninp = args.ninp,
         dropout=args.dropout,
         num_experts=args.num_experts
@@ -263,7 +267,7 @@ def main(args: argparse.Namespace):
     rep = args.preprocessed_path.name
 
     seqs_T, mae = test_model(
-        model, dataset["test"], rep, device, mean, std, args.max_len
+        model, dataset["test"], rep, device, mean, std, args.max_len, args.src_len
     )
     LOGGER.info(
         "Test MAE: "
@@ -302,6 +306,13 @@ if __name__ == "__main__":
         type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to store predicted motion",
         default=None,
+    )
+    parser.add_argument(
+        "--src_len",
+        dest="src_len",
+        type=int,
+        help="Input size for predictions. Needs to match what model is expecting from training.",
+        default=120
     )
     parser.add_argument(
         "--hidden-dim",
