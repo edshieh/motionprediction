@@ -7,9 +7,10 @@ import os
 import torch
 import time
 import matplotlib.pyplot as plt
+import re
 from multiprocessing import Pool
 from pathlib import Path
-
+from collections import OrderedDict
 from fairmotion.models import (
     rnn,
     seq2seq,
@@ -49,6 +50,7 @@ def configure_logging():
 def test_single_input(
     model, 
     input_seq, 
+    architecture: str,
     device: str, 
     mean: float, 
     std: float, 
@@ -57,9 +59,14 @@ def test_single_input(
     with torch.no_grad():
         model.eval()
         input_seq = input_seq.to(device)  # Send input to the appropriate device
-        pred_seq, dispatch_weights, combine_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
-        pred_seq = pred_seq.cpu().numpy()  # Move data to CPU and convert to numpy
-        return pred_seq, dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
+        if architecture == "moe":
+            pred_seq, dispatch_weights, combine_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
+            return pred_seq.cpu().numpy(), dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
+        elif architecture == "STtransformer":
+            pred_seq, spatial_attention_weights, temporal_attention_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
+            return pred_seq.cpu().numpy(), spatial_attention_weights.cpu().numpy(), temporal_attention_weights.cpu().numpy()
+        else:
+            raise Exception("Unsupported architecture for visualization")
 
 def visualize_weights(weights, title):
     num_plots = weights.shape[-1]  # Get the number of subplots based on the last dimension of the weights tensor
@@ -73,6 +80,20 @@ def visualize_weights(weights, title):
         axs[i].set_xlabel('Index')  # Set xlabel
         axs[i].set_ylabel('Value')  # Set ylabel
         
+    plt.suptitle(title)  # Set main title for all subplots
+    plt.tight_layout()  # Adjust layout to prevent overlap
+    plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
+    plt.show()
+
+def visualize_st_weights(weights, title, ranges, subplot_title):
+    fig, axs = plt.subplots(1, len(ranges), figsize=(15, 5))  # Create subplots
+    
+    for axs_idx, value in enumerate(ranges):
+        heatmap = torch.tensor(weights[value-1, :, :])  # Convert NumPy array to PyTorch tensor
+        # import pdb;pdb.set_trace()
+        axs[axs_idx].imshow(heatmap, aspect='auto', cmap='hot')  # Display the heatmap
+        axs[axs_idx].set_title(f'{subplot_title} {value}')  # Set title for the subplot
+    
     plt.suptitle(title)  # Set main title for all subplots
     plt.tight_layout()  # Adjust layout to prevent overlap
     plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
@@ -109,7 +130,15 @@ def prepare_model(
         ninp = ninp,
         num_experts=num_experts
     )
-    model.load_state_dict(torch.load(path,map_location=torch.device('cpu'))['model_state_dict'])
+    loaded_state_dict = torch.load(path,map_location=torch.device('cpu'))
+    formatted_model_state_dict = OrderedDict()
+    for key, val in loaded_state_dict["model_state_dict"].items():
+        matched_key = re.match("^module.(.*)$", key)
+        if matched_key:
+            formatted_model_state_dict[matched_key.group(1)] = val
+        else:
+            formatted_model_state_dict[key] = val
+    model.load_state_dict(formatted_model_state_dict)
     model.eval()
     return model
 
@@ -149,13 +178,19 @@ def main(args):
         num_experts=args.num_experts
     )
     model.eval()
-    pred_seq, dispatch_weights, combine_weights = test_single_input(
-        model, input_seq, device, mean, std, args.max_len
-    )
+    if args.architecture == "moe":
+        pred_seq, dispatch_weights, combine_weights = test_single_input(model, input_seq, args.architecture, device, mean, std, args.max_len)
+        visualize_weights(dispatch_weights, 'Dispatch Weights')
+        visualize_weights(combine_weights, 'Combine Weights')
+    elif args.architecture == "STtransformer":
+        pred_seq, spatial_attention_weights, temporal_attention_weights = test_single_input(model, input_seq, args.architecture, device, mean, std, args.max_len)
+        print(f"{spatial_attention_weights.shape=}")
+        print(f"{temporal_attention_weights.shape=}")
+        visualize_st_weights(spatial_attention_weights, "Spatial Attention Weights", [30,60,90,120], "Joints at timestep ")
+        visualize_st_weights(temporal_attention_weights, "Temporal Attention Weights", [6,12,18,24], "Temporal weights on joints ")
 
-    visualize_weights(dispatch_weights, 'Dispatch Weights')
-    visualize_weights(combine_weights, 'Combine Weights')
-
+    else:
+        raise Exception("Unsupported architecture for visualization")
 
 
 if __name__ == "__main__":
