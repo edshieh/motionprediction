@@ -100,7 +100,7 @@ def get_initial_epoch_and_validation_loss(
         epoch_loss += loss.item()
     epoch_loss = epoch_loss / num_training_sequences
     val_loss = generate.eval(
-        model, criterion, dataset["validation"], batch_size, device, args.src_len
+        model, criterion, dataset["validation"], batch_size, device, args.src_len, args.use_double
     )
     return epoch_loss, val_loss
 
@@ -127,6 +127,7 @@ def train(args: argparse.Namespace):
         batch_size=args.batch_size,
         device=device,
         shuffle=args.shuffle,
+        use_double=args.use_double
     )
 
     if device == "mps":
@@ -157,7 +158,8 @@ def train(args: argparse.Namespace):
         src_len=args.src_len,
         ninp = args.ninp,
         dropout=args.dropout,
-        num_experts=args.num_experts
+        num_experts=args.num_experts,
+        use_double=args.use_double
     )
     optimizer_state_dict = None
     if args.load_from_last_model:
@@ -231,7 +233,7 @@ def train(args: argparse.Namespace):
                 src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
             )
 
-            outputs = outputs.float()
+            outputs = outputs.double() if args.use_double else outputs.float()
 
             # Calculate the main loss
             loss = criterion(
@@ -247,7 +249,7 @@ def train(args: argparse.Namespace):
         epoch_loss = epoch_loss / num_training_sequences
         training_losses.append(epoch_loss)
         val_loss = generate.eval(
-            model, criterion, dataset["validation"], args.batch_size, device, args.src_len
+            model, criterion, dataset["validation"], args.batch_size, device, args.src_len, args.use_double
         )
         val_losses.append(val_loss)
         opt.epoch_step(val_loss=val_loss)
@@ -479,6 +481,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Load state dictionary from last saved model."
+    )
+    parser.add_argument(
+        "--use-double",
+        dest="use_double",
+        action="store_true",
+        default=False,
+        help="Use double precision"
     )
 
     args = parser.parse_args()

@@ -112,6 +112,7 @@ def prepare_dataset(
     batch_size: int,
     device: str,
     shuffle: bool=False,
+    use_double: bool=False
 ) -> Tuple[Dict[str, DataLoader], float, float]:
 
     dataset = {}
@@ -123,7 +124,7 @@ def prepare_dataset(
             mean = dataset["train"].dataset.mean
             std = dataset["train"].dataset.std
         dataset[split] = motion_dataset.get_loader(
-            split_path, batch_size, device, mean, std, shuffle,
+            split_path, batch_size, device, mean, std, shuffle, use_double
         )
     return dataset, mean, std
 
@@ -138,7 +139,8 @@ def prepare_model(
     src_len: int=120,
     ninp: int=56,
     num_experts: int=16,
-    dropout: float=.1
+    dropout: float=.1,
+    use_double: bool=False
 ) -> (
         rnn.RNN |
         seq2seq.Seq2Seq |
@@ -164,7 +166,7 @@ def prepare_model(
         model = seq2seq.Seq2Seq(enc, dec)
     elif architecture == "STtransformer":
         model = SpatioTemporalTransformer.TransformerSpatialTemporalModel(
-            ntoken=input_dim, ninp=ninp, num_heads=num_heads, hidden_dim=hidden_dim, num_layers=num_layers, src_length=src_len, device=device, dropout=dropout
+            ntoken=input_dim, ninp=ninp, num_heads=num_heads, hidden_dim=hidden_dim, num_layers=num_layers, src_length=src_len, device=device, dropout=dropout, use_double=use_double
         )
     elif architecture == "tied_seq2seq":
         model = seq2seq.TiedSeq2Seq(input_dim, hidden_dim, num_layers, device)
@@ -178,7 +180,7 @@ def prepare_model(
         )
     elif architecture == "moe":
         model = moe.moe(
-            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts, use_double=use_double
         )
     elif architecture == "moe_experiment":
         model = moe.moe(
@@ -187,7 +189,8 @@ def prepare_model(
 
     model = model.to(device)
     model.zero_grad()
-    model.float()
+
+    model.double() if use_double else model.float()
 
     return model
 

@@ -97,14 +97,14 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class moe(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, num_experts = 16
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, num_experts = 16, use_double=False
     ):
         # S : number of joints, default 24
         super(moe, self).__init__()
         self.model_type = "TransformerWithEncoderOnly"
         self.src_mask = None
 
-        self.pos_encoder = PositionalEncodingST(ninp, dropout)
+        self.pos_encoder = PositionalEncodingST(ninp, dropout, use_double=use_double)
         self.layers = nn.ModuleList([
             SpatialTemporalEncoderLayer(ninp, num_heads, num_experts, dropout)
             for _ in range(num_layers)

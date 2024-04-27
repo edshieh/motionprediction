@@ -13,8 +13,8 @@ import random
 # Set environment variable for MPS fallback
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
-def convert_on_device(tensor: torch.Tensor, device):
-    return tensor.float()
+def convert_on_device(tensor: torch.Tensor, device, use_double):
+    return tensor.double() if use_double else tensor.float()
 
 #####
 # For the following shape dimensions we use:
@@ -25,14 +25,14 @@ def convert_on_device(tensor: torch.Tensor, device):
 # H: Hidden dimension of feed forward linear layer in attention layers
 #####
 class PositionalEncodingST(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000, device="cpu"):
+    def __init__(self, d_model, dropout=0.1, max_len=5000, device="cpu", use_double=False):
         super(PositionalEncodingST, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
-            convert_on_device(torch.arange(0, d_model, 2), device) * (-np.log(10000.0) / d_model)
+            convert_on_device(torch.arange(0, d_model, 2), device) * (-np.log(10000.0) / d_model), use_double
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term) # T, E
@@ -111,14 +111,14 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class TransformerSpatialTemporalModel(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, device="cpu"
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, device="cpu", use_double=False
     ):
         # S : number of joints, default S
         super(TransformerSpatialTemporalModel, self).__init__()
         self.model_type = "TransformerWithEncoderOnly"
         self.src_mask = None
         self.device = device
-        self.pos_encoder = PositionalEncodingST(ninp, dropout)
+        self.pos_encoder = PositionalEncodingST(ninp, dropout, use_double=use_double)
         self.layers = nn.ModuleList([
             SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device)
             for _ in range(num_layers)

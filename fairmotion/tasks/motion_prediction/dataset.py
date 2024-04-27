@@ -8,7 +8,7 @@ from fairmotion.utils import constants
 
 
 class Dataset(data.Dataset):
-    def __init__(self, dataset_path, device, mean=None, std=None):
+    def __init__(self, dataset_path, device, mean=None, std=None, use_double=False):
         self.src_seqs, self.tgt_seqs = pickle.load(open(dataset_path, "rb"))
         if mean is None or std is None:
             self.mean = np.mean(self.src_seqs, axis=(0, 1))
@@ -18,6 +18,7 @@ class Dataset(data.Dataset):
             self.std = std
         self.num_total_seqs = len(self.src_seqs)
         self.device = device
+        self.use_double = use_double
 
     def __getitem__(self, index):
         """Returns one data pair (source, target)."""
@@ -27,8 +28,12 @@ class Dataset(data.Dataset):
         tgt_seq = (self.tgt_seqs[index] - self.mean) / (
             self.std + constants.EPSILON
         )
-        src_seq = torch.Tensor(src_seq).to(device=self.device).float()
-        tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
+        if not self.use_double:
+            src_seq = torch.Tensor(src_seq).to(device=self.device).float()
+            tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).float()
+        else:
+            src_seq = torch.Tensor(src_seq).to(device=self.device).double()
+            tgt_seq = torch.Tensor(tgt_seq).to(device=self.device).double()
         return src_seq, tgt_seq
 
     def __len__(self):
@@ -42,6 +47,7 @@ def get_loader(
     mean=None,
     std=None,
     shuffle=False,
+    use_double=False
 ):
     """Returns data loader for custom dataset.
     Args:
@@ -57,6 +63,6 @@ def get_loader(
     # data loader for custom dataset
     # this will return (src_seqs, tgt_seqs) for each iteration
     data_loader = data.DataLoader(
-        dataset=dataset, batch_size=batch_size, shuffle=shuffle,
+        dataset=dataset, batch_size=batch_size, shuffle=shuffle, use_double=use_double
     )
     return data_loader

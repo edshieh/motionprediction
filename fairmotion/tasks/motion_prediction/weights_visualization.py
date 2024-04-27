@@ -127,7 +127,7 @@ def convert_to_T(
 def calculate_metrics(
     pred_seqs: np.ndarray,
     tgt_seqs: np.ndarray
-) -> Dict[int, np.float32]:
+) -> Dict[int, np.floating]:
 
     metric_frames = [6, 12, 18, 24]
     R_pred, _ = conversions.T2Rp(pred_seqs)
@@ -157,7 +157,7 @@ def test_model(
     mean: float,
     std: float,
     max_len: int=None
-) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
+) -> Tuple[List[np.ndarray], Dict[int, np.floating]]:
     pred_seqs, src_seqs, tgt_seqs = run_model(
         model, dataset, max_len, device, mean, std,
     )

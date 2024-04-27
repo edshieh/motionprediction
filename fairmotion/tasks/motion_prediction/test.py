@@ -62,7 +62,8 @@ def prepare_model(
     num_heads: int=4,
     src_len: int=120,
     ninp: int=56,
-    num_experts: int=16
+    num_experts: int=16,
+    use_double: bool=False
 ) -> (
     rnn.RNN |
     seq2seq.Seq2Seq |
@@ -81,7 +82,8 @@ def prepare_model(
         num_heads = num_heads,
         src_len=src_len,
         ninp = ninp,
-        num_experts=num_experts
+        num_experts=num_experts,
+        use_double=use_double
     )
     state_dict = torch.load(path,map_location=torch.device('cpu'))['model_state_dict']
     if "module." in state_dict.keys()[0]:
@@ -106,7 +108,8 @@ def run_model(
     device: str,
     mean: float,
     std: float,
-    src_len: int
+    src_len: int,
+    use_double: bool
 ) -> List[np.ndarray]:
     pred_seqs = []
     src_seqs, tgt_seqs = [], []
@@ -116,7 +119,7 @@ def run_model(
         src_seqs.extend(src_seq.to(device="cpu").numpy())
         tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
         pred_seq = (
-            generate.generate(model, src_seq, max_len, device)
+            generate.generate(model, src_seq, max_len, device, use_double)
             .to(device="cpu")
             .numpy()
         )
@@ -185,7 +188,7 @@ def save_motion_files(seqs_T: List[np.ndarray], save_output_path: Path):
 def calculate_metrics(
     pred_seqs: np.ndarray,
     tgt_seqs: np.ndarray
-) -> Dict[int, np.float32]:
+) -> Dict[int, np.floating]:
 
     metric_frames = [6, 12, 18, 24]
     R_pred, _ = conversions.T2Rp(pred_seqs)
@@ -215,10 +218,11 @@ def test_model(
     mean: float,
     std: float,
     max_len: int,
-    src_len: int
-) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
+    src_len: int,
+    use_double: bool
+) -> Tuple[List[np.ndarray], Dict[int, np.floating]]:
     pred_seqs, src_seqs, tgt_seqs = run_model(
-        model, dataset, max_len, device, mean, std, src_len
+        model, dataset, max_len, device, mean, std, src_len, use_double
     )
     seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
     # Calculate metric only when generated sequence has same shape as reference
@@ -268,7 +272,7 @@ def main(args: argparse.Namespace):
     rep = args.preprocessed_path.name
 
     seqs_T, mae = test_model(
-        model, dataset["test"], rep, device, mean, std, args.max_len, args.src_len
+        model, dataset["test"], rep, device, mean, std, args.max_len, args.src_len, args.use_double
     )
     LOGGER.info(
         "Test MAE: "
@@ -394,6 +398,13 @@ if __name__ == "__main__":
             "STtransformer",
             "moe"
         ],
+    )
+    parser.add_argument(
+        "--use-double",
+        dest="use_double",
+        action="store_true",
+        default=False,
+        help="Use double precision"
     )
     args = parser.parse_args()
 
