@@ -320,5 +320,8 @@ class Viewer:
             data = glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE)
             image = Image.frombytes("RGB", (width, height), data)
         image = image.transpose(Image.FLIP_TOP_BOTTOM)
-        
-        return image
+        left = width/3
+        top = height/16
+        right = width/1.5
+        bottom = height - height/8
+        return image.crop((left, top, right, bottom))
