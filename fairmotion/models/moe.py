@@ -9,7 +9,7 @@ from torch.nn import LayerNorm
 from torch.nn import MultiheadAttention
 from torch.nn.init import xavier_uniform_
 
-from fairmotion.models.SpatioTemporalTransformer import PositionalEncodingST
+from fairmotion.models.SpatioTemporalTransformer import PositionalEncodingST, convert_on_device
 import random
 
 # Set environment variable for MPS fallback
@@ -25,9 +25,9 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 #####
 
 class SpatialTemporalEncoderLayer(nn.Module):
-    def __init__(self, ninp, num_heads, num_experts, dropout):
+    def __init__(self, ninp, num_heads, num_experts, dropout, use_double=False):
         super(SpatialTemporalEncoderLayer, self).__init__()
-
+        self.use_double = use_double
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
 
@@ -48,7 +48,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = (
-            mask.float()
+            convert_on_device(mask, self.device, self.use_double)
             .masked_fill(mask == 0, float("-inf"))
             .masked_fill(mask == 1, float(0.0))
         )
@@ -61,6 +61,8 @@ class SpatialTemporalEncoderLayer(nn.Module):
         # tx: input to temporal multihead (T, B*S, E)
         # t_mask :mask for temporal attention
         t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
+        if self.use_double:
+            t_mask = t_mask.double()
         tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
         tm = self.dropout_1(tm)
         tm = self.norm_1(tm + tx)
