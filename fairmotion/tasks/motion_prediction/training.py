@@ -228,7 +228,8 @@ def train(args: argparse.Namespace):
             opt.optimizer.zero_grad()
             src_seqs = src_seqs[:, -args.src_len:, :]
             src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
-
+            if args.use_double:
+                src_seqs, tgt_seqs = src_seqs.double(), tgt_seqs.double()
             outputs = model(
                 src_seqs, tgt_seqs, teacher_forcing_ratio=teacher_forcing_ratio
             )
@@ -271,7 +272,8 @@ def train(args: argparse.Namespace):
                 mean=mean,
                 std=std,
                 max_len=tgt_len,
-                src_len=args.src_len
+                src_len=args.src_len,
+                use_double=args.use_double
             )
             LOGGER.info(f"Validation MAE: {mae}")
             current_state_dicts = { 

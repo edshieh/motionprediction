@@ -58,11 +58,11 @@ def get_loader(
         data_loader: data loader for custom dataset.
     """
     # build a custom dataset
-    dataset = Dataset(dataset_path, device, mean, std)
+    dataset = Dataset(dataset_path, device, mean, std, use_double=use_double)
 
     # data loader for custom dataset
     # this will return (src_seqs, tgt_seqs) for each iteration
     data_loader = data.DataLoader(
-        dataset=dataset, batch_size=batch_size, shuffle=shuffle, use_double=use_double
+        dataset=dataset, batch_size=batch_size, shuffle=shuffle
     )
     return data_loader

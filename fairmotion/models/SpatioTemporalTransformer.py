@@ -32,7 +32,7 @@ class PositionalEncodingST(nn.Module):
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
-            convert_on_device(torch.arange(0, d_model, 2), device) * (-np.log(10000.0) / d_model), use_double
+            convert_on_device(torch.arange(0, d_model, 2), device, use_double) * (-np.log(10000.0) / d_model)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term) # T, E
@@ -46,9 +46,10 @@ class PositionalEncodingST(nn.Module):
         return self.dropout(x) # B, T, S, E
 
 class SpatialTemporalEncoderLayer(nn.Module):
-    def __init__(self, ninp, num_heads, hidden_dim, dropout, device):
+    def __init__(self, ninp, num_heads, hidden_dim, dropout, device, use_double=False):
         super(SpatialTemporalEncoderLayer, self).__init__()
         self.device = device
+        self.use_double = use_double
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
 
@@ -66,7 +67,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = (
-            convert_on_device(mask, self.device)
+            convert_on_device(mask, self.device, self.use_double)
             .masked_fill(mask == 0, float("-inf"))
             .masked_fill(mask == 1, float(0.0))
         )
@@ -78,7 +79,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
         tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
         # tx: input to temporal multihead (T, B*S, E)
         # t_mask : only need to mask for temporal attention not spatial
-        t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
+        t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32).double()
         tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
         tm = self.dropout_1(tm)
         tm = self.norm_1(tm + tx)
@@ -120,7 +121,7 @@ class TransformerSpatialTemporalModel(nn.Module):
         self.device = device
         self.pos_encoder = PositionalEncodingST(ninp, dropout, use_double=use_double)
         self.layers = nn.ModuleList([
-            SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device)
+            SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device, use_double=use_double)
             for _ in range(num_layers)
         ])
 
