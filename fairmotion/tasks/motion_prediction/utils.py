@@ -180,7 +180,7 @@ def prepare_model(
         )
     elif architecture == "moe":
         model = moe.moe(
-            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts, use_double=use_double
+            input_dim, ninp, num_heads, hidden_dim, num_layers, src_len, num_experts=num_experts, device = device, use_double=use_double
         )
     elif architecture == "moe_experiment":
         model = moe.moe(
