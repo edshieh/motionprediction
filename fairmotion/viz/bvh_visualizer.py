@@ -183,7 +183,7 @@ class MocapViewer(glut_viewer.Viewer):
     def idle_callback(self):
         t = self.cur_time % self.motions[0].length()
         frame = self.motions[0].time_to_frame(t)
-        if self.save_path and frame % 10 == 0:
+        if self.save_path and frame > 120 and frame % 4 == 0:
             utils.create_dir_if_absent(self.save_path)
             name = f"frame_{frame}"
             self.save_screen(dir=self.save_path, name=name, render=True)
