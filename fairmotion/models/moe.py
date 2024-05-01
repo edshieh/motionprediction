@@ -55,7 +55,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
         )
         return mask
 
-    def forward(self, x):
+    def forward(self, x, output_weights=False):
         B, T, S, E = x.shape # B x T x S x E
         tx = torch.transpose(x, 0, 1) # T x B x S x E
         tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
@@ -86,14 +86,20 @@ class SpatialTemporalEncoderLayer(nn.Module):
         #reshape so that it fits into MOE
         input_reshaped = torch.reshape(input, (B, T, S*E)) # B x T x (S x E)
         # moe block
-        xx = self.moe(input_reshaped) # B x T x (S x E)
+        if output_weights:
+            xx, dispatch_weights, combine_weights = self.moe(input_reshaped,output_weights=output_weights) # B x T x (S x E)
+        else:
+            xx = self.moe(input_reshaped) # B x T x (S x E)
         # undo reshape
         xx = torch.reshape(xx, (B, T, S, E)) # B x T x S x E
         # dropout
         xx = self.dropout_3(xx)
         # add residual connection and norm
         output = self.norm_3(xx + input)
-        return output
+        if output_weights:    
+            return output, dispatch_weights, combine_weights
+        else:
+            return output
 
 
 
@@ -129,7 +135,7 @@ class moe(nn.Module):
             if p.dim() > 1:
                 xavier_uniform_(p)
 
-    def forward(self, src, tgt, max_len=None, teacher_forcing_ratio=1.):
+    def forward(self, src, tgt, max_len=None, teacher_forcing_ratio=1.,output_weights=False):
         if max_len is None:
             max_len = tgt.shape[1]
         if self.training:
@@ -144,7 +150,10 @@ class moe(nn.Module):
             projected_src = self.encoder(src_slice_reshape) * np.sqrt(self.ninp) # B x T x S x E
             encoder_output = self.pos_encoder(projected_src)# B x T x S x E
             for layer in self.layers:
-                encoder_output = layer(encoder_output)
+                if output_weights:
+                    encoder_output,dispatch_weights,combine_weights = layer(encoder_output,output_weights=output_weights)
+                else:
+                    encoder_output = layer(encoder_output)
             output = self.project_1(encoder_output) # B x T x S x E
             output = torch.reshape(src_slice_reshape, (B, T, S * E)) # B x T x (S x E)
             output = output.transpose(1, 2).contiguous() # B x (S x E) x T
@@ -158,4 +167,7 @@ class moe(nn.Module):
                 src_slice = torch.cat((src_slice, tgt[:,i:i+1,:]), axis=1)
             else:
                 src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
-        return data_chunk
+            if output_weights:
+                return data_chunk,dispatch_weights,combine_weights
+            else:
+                return data_chunk

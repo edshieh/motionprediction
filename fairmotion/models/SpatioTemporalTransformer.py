@@ -52,15 +52,12 @@ class SpatialTemporalEncoderLayer(nn.Module):
         self.use_double = use_double
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
-
         self.dropout_1 = nn.Dropout(dropout)
         self.dropout_2 = nn.Dropout(dropout)
         self.dropout_3 = nn.Dropout(dropout)
-
         self.norm_1 = LayerNorm(ninp)
         self.norm_2 = LayerNorm(ninp)
         self.norm_3 = LayerNorm(ninp)
-
         self.linear_1 = nn.Linear(ninp, hidden_dim)
         self.linear_2 = nn.Linear(hidden_dim, ninp)
 
@@ -73,7 +70,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
         )
         return mask
 
-    def forward(self, x):
+    def forward(self, x, output_weights=False):
         B, T, S, E = x.shape # B x T x S x E
         tx = torch.transpose(x, 0, 1) # T x B x S x E
         tx = torch.reshape(tx, (T, B*S, E)) # T x (B*S) x E
@@ -92,7 +89,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
         sx = torch.reshape(x, (B * T, S, E)) # (B*T) x S x E
         sx = torch.transpose(sx, 0, 1)# S x (B*T) x E
         # sx: input to spatial multihead (S, B*T, E)
-        sm, _ = self.SpatialMultiheadAttention(sx, sx, sx) # S x (B*T) x E
+        sm, s_weight = self.SpatialMultiheadAttention(sx, sx, sx) # S x (B*T) x E
         sm = self.dropout_2(sm)
         sm = self.norm_2(sm + sx)
         sm = torch.transpose(sm, 0, 1) # (B*T) x S x E
@@ -109,6 +106,8 @@ class SpatialTemporalEncoderLayer(nn.Module):
         xx = self.dropout_3(xx)
 
         output = self.norm_3(xx + input)
+        if output_weights:
+          return output, s_weight, t_weight
         return output
 
 
@@ -126,7 +125,6 @@ class TransformerSpatialTemporalModel(nn.Module):
             SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device, use_double=use_double)
             for _ in range(num_layers)
         ])
-
         # Use Linear instead of Embedding for continuous valued input
         self.encoder = nn.Linear(int(ntoken/S), ninp)
 
@@ -143,7 +141,7 @@ class TransformerSpatialTemporalModel(nn.Module):
             if p.dim() > 1:
                 xavier_uniform_(p)
 
-    def forward(self, src, tgt, max_len=None, teacher_forcing_ratio=1.):
+    def forward(self, src, tgt, max_len=None, teacher_forcing_ratio=1., output_weights=False):
         if max_len is None:
             max_len = tgt.shape[1]
         if self.training:
@@ -158,7 +156,10 @@ class TransformerSpatialTemporalModel(nn.Module):
             projected_src = self.encoder(src_slice_reshape) * np.sqrt(self.ninp) # B x T x S x E
             encoder_output = self.pos_encoder(projected_src)# B x T x S x E
             for layer in self.layers:
-                encoder_output = layer(encoder_output)
+                if output_weights:
+                  encoder_output, spatial_attention_weight, temporal_attention_weight = layer(encoder_output, output_weights=output_weights)
+                else:
+                  encoder_output = layer(encoder_output)
             output = self.project_1(encoder_output) # B x T x S x E
             output = torch.reshape(src_slice_reshape, (B, T, S * E)) # B x T x (S x E)
             output = output.transpose(1, 2).contiguous() # B x (S x E) x T
@@ -172,4 +173,6 @@ class TransformerSpatialTemporalModel(nn.Module):
                 src_slice = torch.cat((src_slice, tgt[:,i:i+1,:]), axis=1)
             else:
                 src_slice = torch.cat((src_slice, data_chunk[:,i:i+1,:]), axis=1)
+            if output_weights:
+              return data_chunk, spatial_attention_weight, temporal_attention_weight
         return data_chunk

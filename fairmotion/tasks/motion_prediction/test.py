@@ -86,7 +86,7 @@ def prepare_model(
         use_double=use_double
     )
     state_dict = torch.load(path,map_location=torch.device('cpu'))['model_state_dict']
-    if "module." in state_dict.keys()[0]:
+    if "module." in list(state_dict.keys())[0]:
         state_dict = {k.partition('module.')[2]: v for k,v in state_dict.items()}
     model.load_state_dict(state_dict)
     model.eval()
