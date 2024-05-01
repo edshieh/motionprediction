@@ -142,7 +142,69 @@ def prepare_model(
     model.eval()
     return model
 
-def main(args):
+
+def convert_to_T(
+    pred_seqs: np.ndarray,
+    src_seqs: np.ndarray,
+    tgt_seqs: np.ndarray,
+    rep: str
+) -> List[np.ndarray]:
+    ops = utils.convert_fn_to_R(rep)
+    seqs_T = [
+        conversions.R2T(utils.apply_ops(seqs, ops))
+        for seqs in [pred_seqs, src_seqs, tgt_seqs]
+    ]
+    return seqs_T
+
+
+def calculate_metrics(
+    pred_seqs: np.ndarray,
+    tgt_seqs: np.ndarray
+) -> Dict[int, np.floating]:
+
+    metric_frames = [6, 12, 18, 24]
+    R_pred, _ = conversions.T2Rp(pred_seqs)
+    R_tgt, _ = conversions.T2Rp(tgt_seqs)
+    euler_error = metrics.euler_diff(
+        R_pred[:, :, amass_dip.SMPL_MAJOR_JOINTS],
+        R_tgt[:, :, amass_dip.SMPL_MAJOR_JOINTS],
+    )
+    euler_error = np.mean(euler_error, axis=0)
+    mae = {frame: np.sum(euler_error[:frame]) for frame in metric_frames}
+    return mae
+
+
+def test_model(
+    model: (
+        rnn.RNN |
+        seq2seq.Seq2Seq |
+        seq2seq.TiedSeq2Seq |
+        transformer.TransformerLSTMModel |
+        transformer.TransformerModel |
+        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+        moe.moe
+    ),
+    dataset: Dict[str, DataLoader],
+    rep: str,
+    device: str,
+    mean: float,
+    std: float,
+    max_len: int=None
+) -> Tuple[List[np.ndarray], Dict[int, np.floating]]:
+    pred_seqs, src_seqs, tgt_seqs = run_model(
+        model, dataset, max_len, device, mean, std,
+    )
+    seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
+    # Calculate metric only when generated sequence has same shape as reference
+    # target sequence
+    if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
+        mae = calculate_metrics(seqs_T[0], seqs_T[2])
+
+    return seqs_T, mae
+
+
+def main(args: argparse.Namespace):
+    configure_logging(args.architecture, args.save_model_path)
     device = fairmotion_utils.set_device(args.device)
     LOGGER.info("Loading dataset")
     dataset, mean, std = utils.prepare_dataset(

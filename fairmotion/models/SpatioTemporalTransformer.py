@@ -13,8 +13,8 @@ import random
 # Set environment variable for MPS fallback
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
-def convert_on_device(tensor: torch.Tensor, device):
-    return tensor.float()
+def convert_on_device(tensor: torch.Tensor, device, use_double):
+    return tensor.double() if use_double else tensor.float()
 
 #####
 # For the following shape dimensions we use:
@@ -25,14 +25,14 @@ def convert_on_device(tensor: torch.Tensor, device):
 # H: Hidden dimension of feed forward linear layer in attention layers
 #####
 class PositionalEncodingST(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000, device="cpu"):
+    def __init__(self, d_model, dropout=0.1, max_len=5000, device="cpu", use_double=False):
         super(PositionalEncodingST, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
-            convert_on_device(torch.arange(0, d_model, 2), device) * (-np.log(10000.0) / d_model)
+            convert_on_device(torch.arange(0, d_model, 2), device, use_double) * (-np.log(10000.0) / d_model)
         )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term) # T, E
@@ -46,9 +46,10 @@ class PositionalEncodingST(nn.Module):
         return self.dropout(x) # B, T, S, E
 
 class SpatialTemporalEncoderLayer(nn.Module):
-    def __init__(self, ninp, num_heads, hidden_dim, dropout, device):
+    def __init__(self, ninp, num_heads, hidden_dim, dropout, device, use_double=False):
         super(SpatialTemporalEncoderLayer, self).__init__()
         self.device = device
+        self.use_double = use_double
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.dropout_1 = nn.Dropout(dropout)
@@ -63,7 +64,7 @@ class SpatialTemporalEncoderLayer(nn.Module):
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = (
-            convert_on_device(mask, self.device)
+            convert_on_device(mask, self.device, self.use_double)
             .masked_fill(mask == 0, float("-inf"))
             .masked_fill(mask == 1, float(0.0))
         )
@@ -76,7 +77,9 @@ class SpatialTemporalEncoderLayer(nn.Module):
         # tx: input to temporal multihead (T, B*S, E)
         # t_mask : only need to mask for temporal attention not spatial
         t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
-        tm, t_weight = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
+        if self.use_double:
+            t_mask = t_mask.double()
+        tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
         tm = self.dropout_1(tm)
         tm = self.norm_1(tm + tx)
         tm = torch.transpose(tm, 0, 1) # (B*S) x T x E
@@ -110,16 +113,16 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class TransformerSpatialTemporalModel(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, device="cpu"
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, device="cpu", use_double=False
     ):
         # S : number of joints, default S
         super(TransformerSpatialTemporalModel, self).__init__()
         self.model_type = "TransformerWithEncoderOnly"
         self.src_mask = None
         self.device = device
-        self.pos_encoder = PositionalEncodingST(ninp, dropout)
+        self.pos_encoder = PositionalEncodingST(ninp, dropout, use_double=use_double)
         self.layers = nn.ModuleList([
-            SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device)
+            SpatialTemporalEncoderLayer(ninp, num_heads, hidden_dim, dropout, device, use_double=use_double)
             for _ in range(num_layers)
         ])
         # Use Linear instead of Embedding for continuous valued input

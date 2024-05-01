@@ -9,7 +9,7 @@ from torch.nn import LayerNorm
 from torch.nn import MultiheadAttention
 from torch.nn.init import xavier_uniform_
 
-from fairmotion.models.SpatioTemporalTransformer import PositionalEncodingST
+from fairmotion.models.SpatioTemporalTransformer import PositionalEncodingST, convert_on_device
 import random
 
 # Set environment variable for MPS fallback
@@ -25,9 +25,10 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 #####
 
 class SpatialTemporalEncoderLayer(nn.Module):
-    def __init__(self, ninp, num_heads, num_experts, dropout):
+    def __init__(self, ninp, num_heads, num_experts, dropout, device, use_double=True):
         super(SpatialTemporalEncoderLayer, self).__init__()
-
+        self.device = device
+        self.use_double = use_double
         self.SpatialMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
         self.TemporalMultiheadAttention = MultiheadAttention(ninp, num_heads, dropout)
 
@@ -41,14 +42,14 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
         self.moe = SoftMoE(
             dim = ninp*24,
-            seq_len = num_experts**2,
+            seq_len = num_experts,
             num_experts = num_experts
         )
 
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = (
-            mask.float()
+            convert_on_device(mask, self.device, self.use_double)
             .masked_fill(mask == 0, float("-inf"))
             .masked_fill(mask == 1, float(0.0))
         )
@@ -61,6 +62,8 @@ class SpatialTemporalEncoderLayer(nn.Module):
         # tx: input to temporal multihead (T, B*S, E)
         # t_mask :mask for temporal attention
         t_mask = self._generate_square_subsequent_mask(T).to(device=x.device, dtype=torch.float32)
+        if self.use_double:
+            t_mask = t_mask.double()
         tm, _ = self.TemporalMultiheadAttention(tx, tx, tx, attn_mask= t_mask) # T x (B*S) x E
         tm = self.dropout_1(tm)
         tm = self.norm_1(tm + tx)
@@ -103,16 +106,16 @@ class SpatialTemporalEncoderLayer(nn.Module):
 
 class moe(nn.Module):
     def __init__(
-        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, num_experts = 16
+        self, ntoken, ninp, num_heads, hidden_dim, num_layers, src_length, dropout=0.1, S = 24, num_experts = 16, device = "cpu", use_double=False
     ):
         # S : number of joints, default 24
         super(moe, self).__init__()
         self.model_type = "TransformerWithEncoderOnly"
         self.src_mask = None
-
-        self.pos_encoder = PositionalEncodingST(ninp, dropout)
+        self.device = device
+        self.pos_encoder = PositionalEncodingST(ninp, dropout, use_double=use_double)
         self.layers = nn.ModuleList([
-            SpatialTemporalEncoderLayer(ninp, num_heads, num_experts, dropout)
+            SpatialTemporalEncoderLayer(ninp, num_heads, num_experts, dropout, device=device, use_double=use_double)
             for _ in range(num_layers)
         ])
 
