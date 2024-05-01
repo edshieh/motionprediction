@@ -6,9 +6,11 @@ import numpy as np
 import os
 import torch
 import time
+import matplotlib.pyplot as plt
+import re
 from multiprocessing import Pool
 from pathlib import Path
-
+from collections import OrderedDict
 from fairmotion.models import (
     rnn,
     seq2seq,
@@ -32,7 +34,7 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 LOGGER = logging.getLogger(__name__)
 
-def configure_logging(model_architecture: str, model_save_path: Path):
+def configure_logging():
     global LOGGER
     logFormatter = logging.Formatter(
         fmt="[%(asctime)s] %(message)s",
@@ -41,197 +43,154 @@ def configure_logging(model_architecture: str, model_save_path: Path):
 
     LOGGER.setLevel(logging.INFO)
 
-    log_file = model_save_path.joinpath(f"test_{model_architecture}.log")
-    if log_file.exists():
-        log_file.unlink()
-    fileHandler = logging.FileHandler(log_file)
-    fileHandler.setFormatter(logFormatter)
-    LOGGER.addHandler(fileHandler)
-
     consoleHandler = logging.StreamHandler()
     consoleHandler.setFormatter(logFormatter)
     LOGGER.addHandler(consoleHandler)
 
+def test_single_input(
+    model, 
+    input_seq, 
+    architecture: str,
+    device: str, 
+    mean: float, 
+    std: float, 
+    max_len: int = 1
+):
+    with torch.no_grad():
+        model.eval()
+        input_seq = input_seq.to(device)  # Send input to the appropriate device
+        if architecture == "moe":
+            pred_seq, dispatch_weights, combine_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
+            return pred_seq.cpu().numpy(), dispatch_weights.cpu().numpy(), combine_weights.cpu().numpy()
+        elif architecture == "STtransformer":
+            pred_seq, spatial_attention_weights, temporal_attention_weights = model(input_seq, tgt=None, max_len=1, teacher_forcing_ratio=0, output_weights=True)
+            return pred_seq.cpu().numpy(), spatial_attention_weights.cpu().numpy(), temporal_attention_weights.cpu().numpy()
+        else:
+            raise Exception("Unsupported architecture for visualization")
 
-def run_model(
-    model: (
-        rnn.RNN |
-        seq2seq.Seq2Seq |
-        seq2seq.TiedSeq2Seq |
-        transformer.TransformerLSTMModel |
-        transformer.TransformerModel |
-        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-        moe.moe
-    ),
-    data_iter: Dict[str, DataLoader],
-    max_len: int,
+def visualize_weights(weights, title):
+    num_plots = weights.shape[-1]  # Get the number of subplots based on the last dimension of the weights tensor
+
+    fig, axs = plt.subplots(1, num_plots, figsize=(15, 5))  # Create subplots
+    
+    for i in range(num_plots):
+        heatmap = torch.tensor(weights[0, :, i, i])  # Convert NumPy array to PyTorch tensor
+        axs[i].imshow(heatmap.unsqueeze(0), aspect='auto', cmap='hot')  # Display the heatmap
+        axs[i].set_title(f'Subplot {i+1}')  # Set title for the subplot
+        axs[i].set_xlabel('Index')  # Set xlabel
+        axs[i].set_ylabel('Value')  # Set ylabel
+        
+    plt.suptitle(title)  # Set main title for all subplots
+    plt.tight_layout()  # Adjust layout to prevent overlap
+    plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
+    plt.show()
+
+def visualize_st_weights(weights, title, ranges, subplot_title):
+    fig, axs = plt.subplots(1, len(ranges), figsize=(15, 5))  # Create subplots
+    
+    for axs_idx, value in enumerate(ranges):
+        heatmap = torch.tensor(weights[value-1, :, :])  # Convert NumPy array to PyTorch tensor
+        # import pdb;pdb.set_trace()
+        axs[axs_idx].imshow(heatmap, aspect='auto', cmap='hot')  # Display the heatmap
+        axs[axs_idx].set_title(f'{subplot_title} {value}')  # Set title for the subplot
+    
+    plt.suptitle(title)  # Set main title for all subplots
+    plt.tight_layout()  # Adjust layout to prevent overlap
+    plt.savefig(f"{title.replace(' ', '_').lower()}.png")  # Save the figure
+    plt.show()
+
+def prepare_model(
+    path: Path,
+    num_predictions: int,
+    hidden_dim: int,
     device: str,
-    mean: float,
-    std: float
-) -> List[np.ndarray]:
-    pred_seqs = []
-    src_seqs, tgt_seqs = [], []
-    for src_seq, tgt_seq in data_iter:
-        max_len = max_len if max_len else tgt_seq.shape[1]
-        src_seqs.extend(src_seq.to(device="cpu").numpy())
-        tgt_seqs.extend(tgt_seq.to(device="cpu").numpy())
-        pred_seq = (
-            generate.generate(model, src_seq, max_len, device)
-            .to(device="cpu")
-            .numpy()
-        )
-        pred_seqs.extend(pred_seq)
-    return [
-        utils.unnormalize(np.array(l), mean, std)
-        for l in [pred_seqs, src_seqs, tgt_seqs]
-    ]
-
-
-def save_seq(
-    i: int,
-    pred_seq: np.ndarray,
-    src_seq: np.ndarray,
-    tgt_seq: np.ndarray,
-    skel: Skeleton,
-    save_output_path: Path
-) -> None:
-    # seq_T contains pred, src, tgt data in the same order
-    motions = [
-        motion_class.Motion.from_matrix(seq, skel)
-        for seq in [pred_seq, src_seq, tgt_seq]
-    ]
-    ref_motion = motion_ops.append(motions[1], motions[2])
-    pred_motion = motion_ops.append(motions[1], motions[0])
-    bvh.save(
-        ref_motion, save_output_path.joinpath("ref", f"{i}.bvh"),
+    num_layers: int,
+    architecture: str,
+    num_heads: int=4,
+    src_len: int=120,
+    ninp: int=56,
+    num_experts: int=16
+) -> (
+    rnn.RNN |
+    seq2seq.Seq2Seq |
+    seq2seq.TiedSeq2Seq |
+    transformer.TransformerLSTMModel |
+    transformer.TransformerModel |
+    SpatioTemporalTransformer.TransformerSpatialTemporalModel |
+    moe.moe
+):
+    model = utils.prepare_model(
+        input_dim=num_predictions,
+        hidden_dim=hidden_dim,
+        device=device,
+        num_layers=num_layers,
+        architecture=architecture,
+        num_heads = num_heads,
+        src_len=src_len,
+        ninp = ninp,
+        num_experts=num_experts
     )
-    bvh.save(
-        pred_motion, save_output_path.joinpath("pred", f"{i}.bvh"),
-    )
+    loaded_state_dict = torch.load(path,map_location=torch.device('cpu'))
+    formatted_model_state_dict = OrderedDict()
+    for key, val in loaded_state_dict["model_state_dict"].items():
+        matched_key = re.match("^module.(.*)$", key)
+        if matched_key:
+            formatted_model_state_dict[matched_key.group(1)] = val
+        else:
+            formatted_model_state_dict[key] = val
+    model.load_state_dict(formatted_model_state_dict)
+    model.eval()
+    return model
 
-
-def convert_to_T(
-    pred_seqs: np.ndarray,
-    src_seqs: np.ndarray,
-    tgt_seqs: np.ndarray,
-    rep: str
-) -> List[np.ndarray]:
-    ops = utils.convert_fn_to_R(rep)
-    seqs_T = [
-        conversions.R2T(utils.apply_ops(seqs, ops))
-        for seqs in [pred_seqs, src_seqs, tgt_seqs]
-    ]
-    return seqs_T
-
-
-def calculate_metrics(
-    pred_seqs: np.ndarray,
-    tgt_seqs: np.ndarray
-) -> Dict[int, np.float32]:
-
-    metric_frames = [6, 12, 18, 24]
-    R_pred, _ = conversions.T2Rp(pred_seqs)
-    R_tgt, _ = conversions.T2Rp(tgt_seqs)
-    euler_error = metrics.euler_diff(
-        R_pred[:, :, amass_dip.SMPL_MAJOR_JOINTS],
-        R_tgt[:, :, amass_dip.SMPL_MAJOR_JOINTS],
-    )
-    euler_error = np.mean(euler_error, axis=0)
-    mae = {frame: np.sum(euler_error[:frame]) for frame in metric_frames}
-    return mae
-
-
-def test_model(
-    model: (
-        rnn.RNN |
-        seq2seq.Seq2Seq |
-        seq2seq.TiedSeq2Seq |
-        transformer.TransformerLSTMModel |
-        transformer.TransformerModel |
-        SpatioTemporalTransformer.TransformerSpatialTemporalModel |
-        moe.moe
-    ),
-    dataset: Dict[str, DataLoader],
-    rep: str,
-    device: str,
-    mean: float,
-    std: float,
-    max_len: int=None
-) -> Tuple[List[np.ndarray], Dict[int, np.float32]]:
-    pred_seqs, src_seqs, tgt_seqs = run_model(
-        model, dataset, max_len, device, mean, std,
-    )
-    seqs_T = convert_to_T(pred_seqs, src_seqs, tgt_seqs, rep)
-    # Calculate metric only when generated sequence has same shape as reference
-    # target sequence
-    if len(pred_seqs) > 0 and pred_seqs[0].shape == tgt_seqs[0].shape:
-        mae = calculate_metrics(seqs_T[0], seqs_T[2])
-
-    return seqs_T, mae
-
-
-def main(args: argparse.Namespace):
-    configure_logging(args.architecture, args.save_model_path)
+def main(args):
     device = fairmotion_utils.set_device(args.device)
-    LOGGER.info(f"Using device: {device}")
-
-    LOGGER.info("Preparing dataset")
+    LOGGER.info("Loading dataset")
     dataset, mean, std = utils.prepare_dataset(
         *[
             args.preprocessed_path.joinpath(f"{split}.pkl")
             for split in ["train", "test", "validation"]
         ],
-        batch_size=args.batch_size,
+        batch_size=1,  # Set batch size to 1 to simplify processing
         device=device,
-        shuffle=args.shuffle,
+        shuffle=False  # No need to shuffle as we are only taking the first entry
     )
-    # number of predictions per time step = num_joints * angle representation
-    data_shape = next(iter(dataset["train"]))[0].shape
+
+    input_seq =  next(iter(dataset["test"]))[0]
+
+    data_shape = next(iter(dataset["test"]))[0].shape
     num_predictions = data_shape[-1]
+    print(data_shape)
+    print(num_predictions)
 
-    # Define architecture configurations
-    configurations = [
-        ('STtransformer', [16, 32, 64, 128]),
-        ('moe', [16, 32, 64, 128])
-    ]
+    LOGGER.info("Preparing model")
+    model_filename = f"{args.save_model_name}.model"
+    model_file_path = args.save_model_path.joinpath(model_filename)
+    model = prepare_model(
+        model_file_path,
+        num_predictions=num_predictions,
+        hidden_dim=args.hidden_dim,
+        device=device,
+        num_layers=args.num_layers,
+        architecture=args.architecture,
+        num_heads = args.num_heads,
+        src_len=120,
+        ninp = args.ninp,
+        num_experts=args.num_experts
+    )
+    model.eval()
+    if args.architecture == "moe":
+        pred_seq, dispatch_weights, combine_weights = test_single_input(model, input_seq, args.architecture, device, mean, std, args.max_len)
+        visualize_weights(dispatch_weights, 'Dispatch Weights')
+        visualize_weights(combine_weights, 'Combine Weights')
+    elif args.architecture == "STtransformer":
+        pred_seq, spatial_attention_weights, temporal_attention_weights = test_single_input(model, input_seq, args.architecture, device, mean, std, args.max_len)
+        print(f"{spatial_attention_weights.shape=}")
+        print(f"{temporal_attention_weights.shape=}")
+        visualize_st_weights(spatial_attention_weights, "Spatial Attention Weights", [30,60,90,120], "Joints at timestep ")
+        visualize_st_weights(temporal_attention_weights, "Temporal Attention Weights", [6,12,18,24], "Temporal weights on joints ")
 
-    for architecture, params in configurations:
-        for param in params:
-            args.architecture = architecture
-            if architecture == 'STtransformer':
-                args.hidden_dim = param
-            elif architecture == 'moe':
-                args.num_experts = param
-
-            model = utils.prepare_model(
-                input_dim=num_predictions,
-                hidden_dim=args.hidden_dim,
-                device=device,
-                num_layers=args.num_layers,
-                architecture=args.architecture,
-                num_heads = args.num_heads,
-                src_len=120,
-                ninp = args.ninp,
-                dropout=args.dropout,
-                num_experts=args.num_experts
-            )
-
-            model.init_weights()
-
-            LOGGER.info("Running model")
-            rep = args.preprocessed_path.name
-
-            start_time = time.time()
-            seqs_T, mae = test_model(
-                model, dataset["test"], rep, device, mean, std, args.max_len
-            )
-            duration = time.time() - start_time
-            LOGGER.info(
-                "Test MAE: "
-                + " | ".join([f"{frame}: {mae[frame]}" for frame in mae.keys()])
-            )
-            LOGGER.info(f"Testing took {duration:.2f} seconds")
-
+    else:
+        raise Exception("Unsupported architecture for visualization")
 
 
 if __name__ == "__main__":
@@ -244,6 +203,21 @@ if __name__ == "__main__":
         # type=str,
         type=lambda p: Path(p).expanduser().resolve(strict=True),
         help="Path to folder with pickled files from dataset",
+        required=True,
+    )
+    parser.add_argument(
+        "--save-model-path",
+        dest="save_model_path",
+        # type=str,
+        type=lambda p: Path(p).expanduser().resolve(strict=True),
+        help="Path to saved models",
+        required=True,
+    )
+    parser.add_argument(
+        "--save-model-name",
+        dest="save_model_name",
+        type=str,
+        help="model name",
         required=True,
     )
     parser.add_argument(
@@ -304,13 +278,6 @@ if __name__ == "__main__":
         "--shuffle",
         action='store_true',
         help="Use this option to enable shuffling",
-    )
-    parser.add_argument(
-        "--epoch",
-        type=int,
-        help="Model from epoch to test, will test on best"
-        " model if not specified",
-        default=None,
     )
     parser.add_argument(
         "--device",
