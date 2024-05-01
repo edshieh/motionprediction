@@ -53,6 +53,7 @@ class MocapViewer(glut_viewer.Viewer):
         thickness=1.0,
         render_overlay=False,
         hide_origin=False,
+        save_path=None,
         **kwargs,
     ):
         self.motions = motions
@@ -63,6 +64,7 @@ class MocapViewer(glut_viewer.Viewer):
         self.cur_time = 0.0
         self.scale = scale
         self.thickness = thickness
+        self.save_path = save_path
         super().__init__(**kwargs)
 
     def keyboard_callback(self, key):
@@ -160,13 +162,17 @@ class MocapViewer(glut_viewer.Viewer):
             self._render_pose(pose, "stick_figure2", color)
 
     def render_callback(self):
-        gl_render.render_ground(
-            size=[100, 100],
-            color=[0.8, 0.8, 0.8],
-            axis=utils.axis_to_str(self.motions[0].skel.v_up_env),
-            origin=not self.hide_origin,
-            use_arrow=True,
-        )
+        if args.no_ground:
+            gl_render.render_ground(
+                size=[100, 100],
+                color=[0.8, 0.8, 0.8],
+                axis=utils.axis_to_str(self.motions[0].skel.v_up_env),
+                origin=not self.hide_origin,
+                use_arrow=True,
+            )
+        # Uncomment to get current pos of camera
+        # print(f"--camera-position {cam.pos[0]} {cam.pos[1]} {cam.pos[2]}")
+        # print(f"--camera-origin {cam.origin[0]} {cam.origin[1]} {cam.origin[2]}")
         colors = [
             np.array([123, 174, 85, 255]) / 255.0,  # green
             np.array([255, 255, 0, 255]) / 255.0,  # yellow
@@ -175,6 +181,12 @@ class MocapViewer(glut_viewer.Viewer):
         self._render_characters(colors)
 
     def idle_callback(self):
+        t = self.cur_time % self.motions[0].length()
+        frame = self.motions[0].time_to_frame(t)
+        if self.save_path and frame > 120 and frame % 4 == 0:
+            utils.create_dir_if_absent(self.save_path)
+            name = f"frame_{frame}"
+            self.save_screen(dir=self.save_path, name=name, render=True)
         time_elapsed = self.time_checker.get_time(restart=False)
         self.cur_time += self.play_speed * time_elapsed
         self.time_checker.begin()
@@ -192,7 +204,6 @@ class MocapViewer(glut_viewer.Viewer):
 
 
 def main(args):
-    v_up_env = utils.str_to_axis(args.axis_up)
     if args.bvh_files:
         motions = [
             bvh.load(
@@ -211,13 +222,7 @@ def main(args):
         ]
 
     for i in range(len(motions)):
-        motion_ops.translate(motions[i], [args.x_offset * i, 0, 0])
-    cam = camera.Camera(
-        pos=np.array(args.camera_position),
-        origin=np.array(args.camera_origin),
-        vup=v_up_env,
-        fov=45.0,
-    )
+        motion_ops.translate(motions[i], [args.x_offset * i, 2.5, 0])
     viewer = MocapViewer(
         motions=motions,
         play_speed=args.speed,
@@ -228,6 +233,7 @@ def main(args):
         title="Motion Graph Viewer",
         cam=cam,
         size=(1280, 720),
+        save_path=args.save_path
     )
     viewer.run()
 
@@ -274,9 +280,18 @@ if __name__ == "__main__":
         help="Translates each character by x-offset*idx to display them "
         "simultaneously side-by-side",
     )
+    parser.add_argument("--no-ground", action="store_true")
+    parser.add_argument("--save-path", type=str)
     args = parser.parse_args()
     assert len(args.camera_position) == 3 and len(args.camera_origin) == 3, (
         "Provide x, y and z coordinates for camera position/origin like "
         "--camera-position x y z"
+    )
+    v_up_env = utils.str_to_axis(args.axis_up)
+    cam = camera.Camera(
+        pos=np.array(args.camera_position),
+        origin=np.array(args.camera_origin),
+        vup=v_up_env,
+        fov=45.0,
     )
     main(args)
