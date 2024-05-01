@@ -1,6 +1,6 @@
 from soft_moe_pytorch import SoftMoE
 # Copyright (c) Facebook, Inc. and its affiliates.
-
+# referenced https://github.com/lucidrains/soft-moe-pytorch
 import numpy as np
 import torch
 import torch.nn as nn
