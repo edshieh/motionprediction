@@ -1,15 +1,4 @@
-# motionprediction
-TO DO
-
-
-## Getting Started
-
 ### Installation
-
-motionprediction is available on PyPI for easy installation
-```
-TODO
-```
 
 To install motionprediction from source, first clone the git repository, use pip to download dependencies and build the project.
 ```
