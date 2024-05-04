@@ -1,3 +1,6 @@
+### Motion Prediction
+This repo implements a mixture of experts approach integrated with the state of the art Spatio-Temporal Transformer building upon the open source Fairmotion library.
+
 ### Installation
 
 To install motionprediction from source, first clone the git repository, use pip to download dependencies and build the project.
